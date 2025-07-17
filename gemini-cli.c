@@ -106,6 +106,11 @@ void free_pending_attachments(AppState* state);
 void initialize_default_state(AppState* state);
 void print_usage(const char* prog_name);
 int parse_common_options(int argc, char* argv[], AppState* state);
+static void json_read_string(const cJSON* obj, const char* key, char* buffer, size_t buffer_size);
+static void json_read_float(const cJSON* obj, const char* key, float* target);
+static void json_read_int(const cJSON* obj, const char* key, int* target);
+static void json_read_bool(const cJSON* obj, const char* key, bool* target);
+static void json_read_strdup(const cJSON* obj, const char* key, char** target);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -739,6 +744,78 @@ void generate_interactive_session(int argc, char* argv[]) {
 // --- Helper and Utility Functions ---
 
 /**
+ * @brief Safely reads a string value from a cJSON object into a fixed-size buffer.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the string value to read.
+ * @param buffer The character buffer to store the string.
+ * @param buffer_size The size of the buffer.
+ */
+static void json_read_string(const cJSON* obj, const char* key, char* buffer, size_t buffer_size) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsString(item) && (item->valuestring != NULL)) {
+        strncpy(buffer, item->valuestring, buffer_size - 1);
+        buffer[buffer_size - 1] = '\0'; // Ensure null-termination
+    }
+}
+
+/**
+ * @brief Safely reads a float value from a cJSON object.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the float value to read.
+ * @param target Pointer to the float variable to update.
+ */
+static void json_read_float(const cJSON* obj, const char* key, float* target) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsNumber(item)) {
+        *target = (float)item->valuedouble;
+    }
+}
+
+/**
+ * @brief Safely reads an integer value from a cJSON object.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the integer value to read.
+ * @param target Pointer to the integer variable to update.
+ */
+static void json_read_int(const cJSON* obj, const char* key, int* target) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsNumber(item)) {
+        *target = item->valueint;
+    }
+}
+
+/**
+ * @brief Safely reads a boolean value from a cJSON object.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the boolean value to read.
+ * @param target Pointer to the bool variable to update.
+ */
+static void json_read_bool(const cJSON* obj, const char* key, bool* target) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsBool(item)) {
+        *target = cJSON_IsTrue(item);
+    } else if (cJSON_IsNumber(item)) { // For compatibility with 0/1
+        *target = (item->valueint != 0);
+    }
+}
+
+/**
+ * @brief Safely reads a string from a cJSON object and allocates new memory for it.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the string value to read.
+ * @param target Pointer to the char pointer that will hold the new string.
+ */
+static void json_read_strdup(const cJSON* obj, const char* key, char** target) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsString(item) && (item->valuestring != NULL)) {
+        if (*target) {
+            free(*target);
+        }
+        *target = strdup(item->valuestring);
+    }
+}
+
+/**
  * @brief Parses common command-line options and updates the application state.
  * @param argc The argument count from main().
  * @param argv The argument vector from main().
@@ -1104,39 +1181,49 @@ void load_configuration(AppState* state) {
     char config_path[PATH_MAX];
     get_config_path(config_path, sizeof(config_path));
     if (config_path[0] == '\0') return;
+
     FILE* file = fopen(config_path, "r");
     if (!file) return;
+
     fseek(file, 0, SEEK_END);
     long length = ftell(file);
     fseek(file, 0, SEEK_SET);
+
     char* buffer = malloc(length + 1);
-    if (!buffer) { fclose(file); return; }
-    if (fread(buffer, 1, length, file) != (size_t)length) { fclose(file); free(buffer); return; }
+    if (!buffer) {
+        fclose(file);
+        return;
+    }
+
+    if (fread(buffer, 1, length, file) != (size_t)length) {
+        fclose(file);
+        free(buffer);
+        return;
+    }
     buffer[length] = '\0';
     fclose(file);
+
     cJSON* root = cJSON_Parse(buffer);
     free(buffer);
-    if (!cJSON_IsObject(root)) { cJSON_Delete(root); fprintf(stderr,"Error: wrong JSON in configuration file.\n");return; }
-    cJSON* model = cJSON_GetObjectItem(root, "model");
-    if (cJSON_IsString(model)) { strncpy(state->model_name, model->valuestring, sizeof(state->model_name) - 1); }
-    cJSON* temp = cJSON_GetObjectItem(root, "temperature");
-    if (cJSON_IsNumber(temp)) { state->temperature = temp->valuedouble; }
-    cJSON* seed = cJSON_GetObjectItem(root, "seed");
-    if (cJSON_IsNumber(seed)) { state->seed = seed->valueint; }
-    cJSON* sys_prompt = cJSON_GetObjectItem(root, "system_prompt");
-    if (cJSON_IsString(sys_prompt)) { if(state->system_prompt) free(state->system_prompt); state->system_prompt = strdup(sys_prompt->valuestring); }
-    cJSON* api_key = cJSON_GetObjectItem(root, "api_key");
-    if (cJSON_IsString(api_key)) { strncpy(state->api_key, api_key->valuestring, sizeof(state->api_key) - 1); }
-    cJSON* origin = cJSON_GetObjectItem(root, "origin");
-    if (cJSON_IsString(origin)) { strncpy(state->origin, origin->valuestring, sizeof(state->origin) - 1); }
-    cJSON* max_tokens = cJSON_GetObjectItem(root, "max_output_tokens");
-    if (cJSON_IsNumber(max_tokens)) { state->max_output_tokens = max_tokens->valueint; }
-    cJSON* budget = cJSON_GetObjectItem(root, "thinking_budget");
-    if (cJSON_IsNumber(budget)) { state->thinking_budget = budget->valueint; }
-    cJSON* google_grounding = cJSON_GetObjectItem(root, "google_grounding");
-    if (cJSON_IsNumber(budget)) { state->google_grounding = google_grounding->valueint; }
-    cJSON* url_context = cJSON_GetObjectItem(root, "url_context");
-    if (cJSON_IsNumber(budget)) { state->url_context = url_context->valueint; }
+
+    if (!cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        fprintf(stderr,"Warning: Could not parse configuration file or it is not a valid JSON object.\n");
+        return;
+    }
+
+    // Read values from JSON using the helper functions
+    json_read_string(root, "model", state->model_name, sizeof(state->model_name));
+    json_read_float(root, "temperature", &state->temperature);
+    json_read_int(root, "seed", &state->seed);
+    json_read_strdup(root, "system_prompt", &state->system_prompt);
+    json_read_string(root, "api_key", state->api_key, sizeof(state->api_key));
+    json_read_string(root, "origin", state->origin, sizeof(state->origin));
+    json_read_int(root, "max_output_tokens", &state->max_output_tokens);
+    json_read_int(root, "thinking_budget", &state->thinking_budget);
+    json_read_bool(root, "google_grounding", &state->google_grounding);
+    json_read_bool(root, "url_context", &state->url_context);
+
     cJSON_Delete(root);
 }
 
@@ -1197,15 +1284,20 @@ cJSON* build_request_json(AppState* state) {
         cJSON_AddItemToArray(contents, content_item);
     }
     // --- Add tools configuration ---
-    cJSON* tools_array = cJSON_CreateArray();
-    cJSON* tool1 = cJSON_CreateObject();
-    cJSON_AddItemToObject(tool1, "urlContext", cJSON_CreateObject());
-    cJSON_AddItemToArray(tools_array, tool1);
-    cJSON* tool2 = cJSON_CreateObject();
-    cJSON_AddItemToObject(tool2, "googleSearch", cJSON_CreateObject());
-    cJSON_AddItemToArray(tools_array, tool2);
-    cJSON_AddItemToObject(root, "tools", tools_array);
-
+    if (state->url_context && state->google_grounding) {
+        cJSON* tools_array = cJSON_CreateArray();
+        if (state->url_context) {
+            cJSON* tool1 = cJSON_CreateObject();
+            cJSON_AddItemToObject(tool1, "urlContext", cJSON_CreateObject());
+            cJSON_AddItemToArray(tools_array, tool1);
+        }
+        if (state->google_grounding) {
+            cJSON* tool2 = cJSON_CreateObject();
+            cJSON_AddItemToObject(tool2, "googleSearch", cJSON_CreateObject());
+            cJSON_AddItemToArray(tools_array, tool2);
+        }
+        cJSON_AddItemToObject(root, "tools", tools_array);
+    }
     cJSON_AddItemToObject(root, "contents", contents);
     cJSON* gen_config = cJSON_CreateObject();
     cJSON_AddNumberToObject(gen_config, "temperature", state->temperature);
