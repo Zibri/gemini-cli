@@ -102,6 +102,8 @@ void generate_non_interactive_response(int argc, char* argv[]);
 static size_t write_to_memory_struct_callback(void* contents, size_t size, size_t nmemb, void* userp);
 void free_pending_attachments(AppState* state);
 void initialize_default_state(AppState* state);
+void print_usage(const char* prog_name);
+int parse_common_options(int argc, char* argv[], AppState* state);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -172,23 +174,15 @@ void generate_interactive_session(int argc, char* argv[]) {
 
     load_configuration(&state);
 
-    for (int i = 1; i < argc; i++) {
-        if ((STRCASECMP(argv[i], "-m") == 0 || STRCASECMP(argv[i], "--model") == 0) && (i + 1 < argc)) {
-            strncpy(state.model_name, argv[i + 1], sizeof(state.model_name) - 1);
-            state.model_name[sizeof(state.model_name) - 1] = '\0';
-            i++;
-        } else if ((STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0) && (i + 1 < argc)) {
-            state.temperature = atof(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-s") == 0 || STRCASECMP(argv[i], "--seed") == 0) && (i + 1 < argc)) {
-            state.seed = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-o") == 0 || STRCASECMP(argv[i], "--max-tokens") == 0) && (i + 1 < argc)) {
-            state.max_output_tokens = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
-            state.thinking_budget = atoi(argv[i + 1]);
-            i++;
+    int first_arg_index = parse_common_options(argc, argv, &state);
+
+    // Process remaining arguments as files or history loads
+    for (int i = first_arg_index; i < argc; i++) {
+        if (strlen(argv[i]) > 5 && strcmp(argv[i] + strlen(argv[i]) - 5, ".json") == 0) {
+            load_history_from_file(&state, argv[i]);
+        } else {
+            // Treat the rest as files to attach
+            handle_attachment_from_stream(NULL, argv[i], get_mime_type(argv[i]), &state);
         }
     }
 
@@ -214,18 +208,6 @@ void generate_interactive_session(int argc, char* argv[]) {
     if (origin_from_env) {
         strncpy(state.origin, origin_from_env, sizeof(state.origin) - 1);
         fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
-    }
-
-    for (int i = 1; i < argc; i++) {
-        if ((STRCASECMP(argv[i], "-m") == 0 || STRCASECMP(argv[i], "--model") == 0) ||
-            (STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0)) {
-            i++; continue;
-        }
-        if (strlen(argv[i]) > 5 && strcmp(argv[i] + strlen(argv[i]) - 5, ".json") == 0) {
-            load_history_from_file(&state, argv[i]);
-        } else {
-            handle_attachment_from_stream(NULL, argv[i], get_mime_type(argv[i]), &state);
-        }
     }
 
     if (state.num_attached_parts > 0) {
@@ -755,6 +737,75 @@ void generate_interactive_session(int argc, char* argv[]) {
 // --- Helper and Utility Functions ---
 
 /**
+ * @brief Parses common command-line options and updates the application state.
+ * @param argc The argument count from main().
+ * @param argv The argument vector from main().
+ * @param state A pointer to the AppState struct to be updated.
+ * @return The index of the first argument that was not a recognized option.
+ */
+int parse_common_options(int argc, char* argv[], AppState* state) {
+    int i;
+    for (i = 1; i < argc; i++) {
+        if ((STRCASECMP(argv[i], "-m") == 0 || STRCASECMP(argv[i], "--model") == 0) && (i + 1 < argc)) {
+            strncpy(state->model_name, argv[i + 1], sizeof(state->model_name) - 1);
+            state->model_name[sizeof(state->model_name) - 1] = '\0';
+            i++;
+        } else if ((STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0) && (i + 1 < argc)) {
+            state->temperature = atof(argv[i + 1]);
+            i++;
+        } else if ((STRCASECMP(argv[i], "-s") == 0 || STRCASECMP(argv[i], "--seed") == 0) && (i + 1 < argc)) {
+            state->seed = atoi(argv[i + 1]);
+            i++;
+        } else if ((STRCASECMP(argv[i], "-o") == 0 || STRCASECMP(argv[i], "--max-tokens") == 0) && (i + 1 < argc)) {
+            state->max_output_tokens = atoi(argv[i + 1]);
+            i++;
+        } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
+            state->thinking_budget = atoi(argv[i + 1]);
+            i++;
+        } else if ((STRCASECMP(argv[i], "-h") == 0 || STRCASECMP(argv[i], "--help") == 0)) {
+            print_usage(argv[0]);
+            // Returning a special value or setting a flag might be cleaner,
+            // but for this purpose, exiting directly is what the original code did.
+            exit(0);
+        } else {
+            // This is not a recognized option, so stop parsing and return its index.
+            return i;
+        }
+    }
+    return i; // Return the index after all arguments have been processed.
+}
+/**
+ * @brief Prints the command-line usage instructions and exits.
+ */
+void print_usage(const char* prog_name) {
+    fprintf(stderr, "Usage: %s [options] [prompt or files...]\n\n", prog_name);
+    fprintf(stderr, "A portable, feature-rich command-line client for the Google Gemini API.\n\n");
+    fprintf(stderr, "The client operates in two modes:\n");
+    fprintf(stderr, "  - Interactive Mode: (Default) A full chat session with history and commands.\n");
+    fprintf(stderr, "  - Non-Interactive Mode: Engaged if input is piped.\n\n");
+//    fprintf(stderr, "  - Non-Interactive Mode: Engaged if input is piped or a prompt is given as an argument.\n\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -m, --model <name>        Specify the model name (e.g., gemini-2.5-pro).\n");
+    fprintf(stderr, "  -t, --temp <float>        Set the generation temperature (0.0 to 1.0).\n");
+    fprintf(stderr, "  -s, --seed <int>          Set the generation seed for reproducible outputs.\n");
+    fprintf(stderr, "  -o, --max-tokens <int>    Set the maximum number of tokens in the response.\n");
+    fprintf(stderr, "  -b, --budget <int>        Set the model's max 'thinking' token budget.\n");
+    fprintf(stderr, "      --help                Show this help message and exit.\n\n");
+/*
+    fprintf(stderr, "Non-Interactive Examples:\n");
+    fprintf(stderr, "  # Quick question\n");
+    fprintf(stderr, "  %s \"What is the capital of Nepal?\"\n\n", prog_name);
+    fprintf(stderr, "  # Summarize a file by piping its content\n");
+    fprintf(stderr, "  cat main.c | %s \"Summarize this C code.\"\n\n", prog_name);
+    fprintf(stderr, "Interactive Examples:\n");
+    fprintf(stderr, "  # Start a standard interactive session\n");
+    fprintf(stderr, "  %s\n\n", prog_name);
+    fprintf(stderr, "  # Start a session with a specific model and attach files\n");
+    fprintf(stderr, "  %s -m gemini-2.5-flash-latest main.c Makefile\n\n", prog_name);
+    fprintf(stderr, "For commands available within the interactive session, type '/help'.\n");
+*/
+}
+/**
  * @brief Sets the application state to its default values.
  */
 void initialize_default_state(AppState* state) {
@@ -792,33 +843,17 @@ void generate_non_interactive_response(int argc, char* argv[]) {
     char prompt_buffer[16384] = {0};
     size_t prompt_len = 0;
 
-    for (int i = 1; i < argc; i++) {
-        if ((STRCASECMP(argv[i], "-m") == 0 || STRCASECMP(argv[i], "--model") == 0) && (i + 1 < argc)) {
-            strncpy(state.model_name, argv[i + 1], sizeof(state.model_name) - 1);
-            state.model_name[sizeof(state.model_name) - 1] = '\0';
-            i++;
-        } else if ((STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0) && (i + 1 < argc)) {
-            state.temperature = atof(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-s") == 0 || STRCASECMP(argv[i], "--seed") == 0) && (i + 1 < argc)) {
-            state.seed = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-o") == 0 || STRCASECMP(argv[i], "--max-tokens") == 0) && (i + 1 < argc)) {
-            state.max_output_tokens = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
-            state.thinking_budget = atoi(argv[i + 1]);
-            i++;
-        } else {
-            // Treat everything else as part of the prompt
-            size_t arg_len = strlen(argv[i]);
-            if (prompt_len + arg_len + 2 < sizeof(prompt_buffer)) {
-                char* p = prompt_buffer + prompt_len;
-                size_t remaining = sizeof(prompt_buffer) - prompt_len;
-                int written = snprintf(p, remaining, "%s ", argv[i]);
-                if (written > 0 && (size_t)written < remaining) {
-                    prompt_len += written;
-                }
+    int first_arg_index = parse_common_options(argc, argv, &state);
+
+    // Process remaining arguments as the prompt
+    for (int i = first_arg_index; i < argc; i++) {
+        size_t arg_len = strlen(argv[i]);
+        if (prompt_len + arg_len + 2 < sizeof(prompt_buffer)) {
+            char* p = prompt_buffer + prompt_len;
+            size_t remaining = sizeof(prompt_buffer) - prompt_len;
+            int written = snprintf(p, remaining, "%s ", argv[i]);
+            if (written > 0 && (size_t)written < remaining) {
+                prompt_len += written;
             }
         }
     }
