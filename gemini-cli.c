@@ -193,13 +193,20 @@ void generate_interactive_session(int argc, char* argv[]) {
         }
     }
 
-    if (strstr(state.model_name, "flash") != NULL) {
+    if ((strstr(state.model_name, "flash") != NULL) && (state.thinking_budget > 16384)) {
         state.thinking_budget = 16384;
     }
     
     fprintf(stderr,"Using model: %s, Temperature: %.2f, Seed: %d\n", state.model_name, state.temperature, state.seed);
     if (state.max_output_tokens > 0) { fprintf(stderr,"Max Output Tokens: %d\n", state.max_output_tokens); }
-    if (state.thinking_budget > 0) { fprintf(stderr,"Thinking Budget: %d tokens\n", state.thinking_budget); }
+    if (state.thinking_budget > 0) {
+    	 fprintf(stderr,"Thinking Budget: %d tokens\n", state.thinking_budget);
+    } else {
+    	 fprintf(stderr,"Thinking Budget: automatic\n");
+    }
+    
+    fprintf(stderr,"Google grounding: %s\n", state.google_grounding?"ON":"OFF");
+    fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
 	
     char* key_from_env = getenv("GEMINI_API_KEY");
     if (key_from_env) {
@@ -443,7 +450,12 @@ void generate_interactive_session(int argc, char* argv[]) {
                         fprintf(stderr, "Error: Invalid budget value.\n");
                     } else {
                         state.thinking_budget = (int)budget;
-                        fprintf(stderr, "Thinking budget set to %d tokens.\n", state.thinking_budget);
+                        if (state.thinking_budget<1) {
+                        	state.thinking_budget=-1;
+                        	fprintf(stderr, "Thinking budget set to automatic.\n");
+                        } else {
+                          fprintf(stderr, "Thinking budget set to %d tokens.\n", state.thinking_budget);
+                        }
                     }
                 }
             } else if (strcmp(command_buffer, "/maxtokens") == 0) {
@@ -905,13 +917,16 @@ void initialize_default_state(AppState* state) {
     state->max_output_tokens = 65536;
     state->google_grounding = true;
     state->url_context = true;
+    state->thinking_budget = -1;
 
+/*
     // Conditionally set the thinking_budget based on the model name
     if (strstr(state->model_name, "flash") != NULL) {
         state->thinking_budget = 16384;
     } else {
         state->thinking_budget = 32768;
     }
+*/
 }
 
 /**
@@ -943,7 +958,7 @@ void generate_non_interactive_response(int argc, char* argv[]) {
         }
     }
 
-    if (strstr(state.model_name, "flash") != NULL) {
+    if ((strstr(state.model_name, "flash") != NULL) && (state.thinking_budget>16384)) {
         state.thinking_budget = 16384;
     }
     
@@ -1307,8 +1322,8 @@ cJSON* build_request_json(AppState* state) {
 
     cJSON* thinking_config = cJSON_CreateObject();
     cJSON_AddNumberToObject(thinking_config, "thinkingBudget", state->thinking_budget);
-    if (state->thinking_budget > 0)
-        cJSON_AddItemToObject(gen_config, "thinkingConfig", thinking_config);
+    //if (state->thinking_budget > 0)
+    cJSON_AddItemToObject(gen_config, "thinkingConfig", thinking_config);
 
     return root;
 }
