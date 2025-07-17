@@ -68,6 +68,8 @@ typedef struct AppState {
     float temperature;
     int max_output_tokens;
     int thinking_budget;
+    bool google_grounding;
+    bool url_context;
     History history;
     char* last_model_response;
     char* system_prompt;
@@ -762,6 +764,10 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
         } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
             state->thinking_budget = atoi(argv[i + 1]);
             i++;
+        } else if (STRCASECMP(argv[i], "-ng") == 0 || STRCASECMP(argv[i], "--no-grounding") == 0) {
+            state->google_grounding = false;
+        } else if (STRCASECMP(argv[i], "-nu") == 0 || STRCASECMP(argv[i], "--no-url-context") == 0) {
+            state->url_context = false;
         } else if ((STRCASECMP(argv[i], "-h") == 0 || STRCASECMP(argv[i], "--help") == 0)) {
             print_usage(argv[0]);
             // Returning a special value or setting a flag might be cleaner,
@@ -820,6 +826,8 @@ void initialize_default_state(AppState* state) {
     state->temperature = 0.75f;
     state->seed = 42;
     state->max_output_tokens = 65536;
+    state->google_grounding = true;
+    state->url_context = true;
 
     // Conditionally set the thinking_budget based on the model name
     if (strstr(state->model_name, "flash") != NULL) {
@@ -1125,6 +1133,10 @@ void load_configuration(AppState* state) {
     if (cJSON_IsNumber(max_tokens)) { state->max_output_tokens = max_tokens->valueint; }
     cJSON* budget = cJSON_GetObjectItem(root, "thinking_budget");
     if (cJSON_IsNumber(budget)) { state->thinking_budget = budget->valueint; }
+    cJSON* google_grounding = cJSON_GetObjectItem(root, "google_grounding");
+    if (cJSON_IsNumber(budget)) { state->google_grounding = google_grounding->valueint; }
+    cJSON* url_context = cJSON_GetObjectItem(root, "url_context");
+    if (cJSON_IsNumber(budget)) { state->url_context = url_context->valueint; }
     cJSON_Delete(root);
 }
 
