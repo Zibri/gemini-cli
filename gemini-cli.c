@@ -1,5 +1,5 @@
 /**
- * @file prompt.c
+ * @file gemini-cli.c
  * @brief An interactive, portable command-line client for the Google Gemini API.
  *
  * This program provides a feature-rich, shell-like interface for conversing
@@ -37,6 +37,7 @@
   #define MKDIR(path) _mkdir(path)
   #define STRCASECMP _stricmp
   #define PATH_MAX MAX_PATH
+  #define stat _stat
 #else
   #include <unistd.h>
   #include <termios.h>
@@ -185,13 +186,33 @@ void generate_interactive_session(int argc, char* argv[]) {
 
     int first_arg_index = parse_common_options(argc, argv, &state);
 
-    // Process remaining arguments as files or history loads
+    // Buffer to hold initial prompt text from command line arguments
+    char initial_prompt_buffer[16384] = {0};
+    size_t initial_prompt_len = 0;
+
+    // Process remaining arguments as files, history loads, or prompt text
     for (int i = first_arg_index; i < argc; i++) {
         if (strlen(argv[i]) > 5 && strcmp(argv[i] + strlen(argv[i]) - 5, ".json") == 0) {
             load_history_from_file(&state, argv[i]);
-        } else {
-            // Treat the rest as files to attach
+            continue;
+        }
+
+        struct stat st;
+        if (stat(argv[i], &st) == 0) {
+            // Argument is an existing file, so attach it
             handle_attachment_from_stream(NULL, argv[i], get_mime_type(argv[i]), &state);
+        } else {
+            // Argument is not a file, so append it to the prompt buffer
+            size_t arg_len = strlen(argv[i]);
+            if (initial_prompt_len + arg_len + 2 < sizeof(initial_prompt_buffer)) {
+                if (initial_prompt_len > 0) {
+                    initial_prompt_buffer[initial_prompt_len++] = ' ';
+                }
+                strcpy(initial_prompt_buffer + initial_prompt_len, argv[i]);
+                initial_prompt_len += arg_len;
+            } else {
+                fprintf(stderr, "Warning: Initial prompt from arguments is too long, argument ignored: %s\n", argv[i]);
+            }
         }
     }
 
@@ -232,6 +253,55 @@ void generate_interactive_session(int argc, char* argv[]) {
 
     fprintf(stderr, "Interactive session started. Type '/help' for commands, '/exit' or '/quit' to end.\n");
 
+    // If an initial prompt was constructed from the arguments, execute it immediately.
+    if (initial_prompt_len > 0) {
+        fprintf(stderr, "Initial prompt provided. Sending request...\n");
+
+        int total_parts_this_turn = state.num_attached_parts + 1; // +1 for the text prompt
+
+        Part* current_turn_parts = malloc(sizeof(Part) * total_parts_this_turn);
+        if (!current_turn_parts) {
+            fprintf(stderr, "Error: Failed to allocate memory for initial prompt parts.\n");
+        } else {
+            int current_part_index = 0;
+            // Move pending attachments into this turn's parts
+            for (int j = 0; j < state.num_attached_parts; j++) {
+                current_turn_parts[current_part_index++] = state.attached_parts[j];
+            }
+
+            // Add the text prompt part from the command line args
+            current_turn_parts[current_part_index] = (Part){ .type = PART_TYPE_TEXT, .text = initial_prompt_buffer, .mime_type = NULL, .base64_data = NULL };
+
+            // Add the combined parts to history
+            add_content_to_history(&state.history, "user", current_turn_parts, total_parts_this_turn);
+
+            // Clear the pending attachments list now that they are in history
+            free_pending_attachments(&state);
+            free(current_turn_parts);
+            
+            printf("\n");
+
+            // Send the API request
+            char* model_response_text = NULL;
+            if (send_api_request(&state, &model_response_text)) {
+                printf("\n"); // Final newline after streaming response
+                if (state.last_model_response) free(state.last_model_response);
+                state.last_model_response = model_response_text; // Take ownership
+
+                // Add the model's response to the history
+                Part model_part = { .type = PART_TYPE_TEXT, .text = strdup(state.last_model_response), .mime_type = NULL, .base64_data = NULL };
+                add_content_to_history(&state.history, "model", &model_part, 1);
+                free(model_part.text);
+            } else {
+                // If the API call failed, roll back the user's prompt from history
+                if (state.history.num_contents > 0) {
+                    state.history.num_contents--;
+                    free_content(&state.history.contents[state.history.num_contents]);
+                }
+            }
+        }
+    }
+    
 #ifdef _WIN32
     char history_path[PATH_MAX];
     snprintf(history_path, sizeof(history_path), "%s\\gemini-cli\\history.txt", getenv("APPDATA"));
@@ -672,6 +742,8 @@ void generate_interactive_session(int argc, char* argv[]) {
         free_pending_attachments(&state);
         // Free only the container array, as its contents were either moved or pointed to stack data.
         free(current_turn_parts);
+        
+        printf("\n");
 
         char* model_response_text = NULL;
         if (send_api_request(&state, &model_response_text)) {
@@ -794,7 +866,6 @@ bool send_api_request(AppState* state, char** full_response_out) {
             curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-            printf("\n"); // Start response on a new line
 
             CURLcode res = curl_easy_perform(curl);
             long http_code = 0;
@@ -1062,7 +1133,7 @@ void generate_non_interactive_response(int argc, char* argv[]) {
     char* model_response_text = NULL;
     if (send_api_request(&state, &model_response_text)) {
         // Success: streaming callback already printed the output.
-        printf("\n"); // Add a final newline for clean shell output.
+        //printf("\n"); // Add a final newline for clean shell output.
         free(model_response_text); // We don't need to store it.
     } else {
         // Failure: error was already printed by the helper function.
@@ -1745,22 +1816,24 @@ char* base64_encode(const unsigned char* data, size_t input_length) {
 int main(int argc, char* argv[]) {
     curl_global_init(CURL_GLOBAL_ALL);
 
-    // The single, most reliable check to differentiate modes:
-    // Is the program's standard input connected to a user's terminal,
-    // or is it a pipe/file redirect?
+    // Differentiate modes by checking if both stdin and stdout are terminals.
+    // If either is redirected (e.g., `cat file | prompt` or `prompt > out.txt`),
+    // the program should run in non-interactive mode.
     #ifdef _WIN32
         int is_stdin_a_terminal = _isatty(_fileno(stdin));
+        int is_stdout_a_terminal = _isatty(_fileno(stdout));
     #else
         int is_stdin_a_terminal = isatty(fileno(stdin));
+        int is_stdout_a_terminal = isatty(fileno(stdout));
     #endif
 
-    if (is_stdin_a_terminal) {
-        // Standard input is the user's keyboard. Start the full interactive session.
-        // The interactive session's own logic will correctly handle any arguments
-        // like `-m model` or a `filename.txt` to attach.
+    if (is_stdin_a_terminal && is_stdout_a_terminal) {
+        // Both input and output are the user's keyboard/screen.
+        // Start the full interactive session.
         generate_interactive_session(argc, argv);
     } else {
-        // Standard input is a pipe or a file. Run in non-interactive/scripting mode.
+        // Either input is a pipe/file or output is a pipe/file.
+        // Run in non-interactive/scripting mode.
         generate_non_interactive_response(argc, argv);
     }
 
