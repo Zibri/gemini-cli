@@ -111,6 +111,7 @@ static void json_read_float(const cJSON* obj, const char* key, float* target);
 static void json_read_int(const cJSON* obj, const char* key, int* target);
 static void json_read_bool(const cJSON* obj, const char* key, bool* target);
 static void json_read_strdup(const cJSON* obj, const char* key, char** target);
+bool send_api_request(AppState* state, char** full_response_out);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -683,63 +684,24 @@ void generate_interactive_session(int argc, char* argv[]) {
         // Free only the container array, as its contents were either moved or pointed to stack data.
         free(current_turn_parts);
 
-        cJSON* root = build_request_json(&state);
-        if (!root) { free(line); continue; }
-        char* json_string = cJSON_PrintUnformatted(root);
-        cJSON_Delete(root);
-        GzipResult compressed_result = gzip_compress((unsigned char*)json_string, strlen(json_string));
-        free(json_string);
-        if (!compressed_result.data) { free(line); continue; }
+        char* model_response_text = NULL;
+        if (send_api_request(&state, &model_response_text)) {
+            // Success
+            printf("\n"); // Add final newline after streaming
+            if (state.last_model_response) free(state.last_model_response);
+            state.last_model_response = model_response_text; // Take ownership
 
-        CURL* curl = curl_easy_init();
-        if (curl) {
-            char full_api_url[256], auth_header[256], origin_header[256];
-            snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state.model_name, "streamGenerateContent?alt=sse");
-            snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state.api_key);
-            snprintf(origin_header, sizeof(origin_header), "Origin: %s", state.origin);
-            struct curl_slist* headers = NULL;
-            headers = curl_slist_append(headers, "Content-Type: application/json");
-            headers = curl_slist_append(headers, "Content-Encoding: gzip");
-            headers = curl_slist_append(headers, auth_header);
-            if (strcmp(state.origin, "default") != 0) { headers = curl_slist_append(headers, origin_header); }
-            MemoryStruct chunk = { .buffer = malloc(1), .size = 0, .full_response = malloc(1), .full_response_size = 0 };
-            if (!chunk.buffer || !chunk.full_response) {
-                 fprintf(stderr, "Error: Failed to allocate memory for curl response chunk.\n");
-            } else {
-                chunk.buffer[0] = '\0'; chunk.full_response[0] = '\0';
-                curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
-                curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-                curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_result.data);
-                curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
-                curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
-                curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-                printf("\n");
-                //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-                CURLcode res = curl_easy_perform(curl);
-                long http_code = 0;
-                curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-                if (res == CURLE_OK && http_code == 200) {
-                     printf("\n");
-                     if (state.last_model_response) free(state.last_model_response);
-                     state.last_model_response = chunk.full_response;
-                     Part model_part = { .type = PART_TYPE_TEXT, .text = strdup(state.last_model_response), .mime_type = NULL, .base64_data = NULL };
-                     add_content_to_history(&state.history, "model", &model_part, 1);
-                     free(model_part.text);
-                } else {
-                    fprintf(stderr, "\nAPI call failed (HTTP code: %ld, Curl code: %d)\n", http_code, res);
-                    parse_and_print_error_json(chunk.buffer);
-                    if (state.history.num_contents > 0) {
-                        state.history.num_contents--;
-                        free_content(&state.history.contents[state.history.num_contents]);
-                    }
-                    free(chunk.full_response);
-                }
+            Part model_part = { .type = PART_TYPE_TEXT, .text = strdup(state.last_model_response), .mime_type = NULL, .base64_data = NULL };
+            add_content_to_history(&state.history, "model", &model_part, 1);
+            free(model_part.text);
+        } else {
+            // Failure: helper printed error, so just roll back the user prompt from history
+            if (state.history.num_contents > 0) {
+                state.history.num_contents--;
+                free_content(&state.history.contents[state.history.num_contents]);
             }
-            curl_easy_cleanup(curl);
-            curl_slist_free_all(headers);
-            if (chunk.buffer) free(chunk.buffer);
         }
-        free(compressed_result.data);
+        
         free(line);
     }
 
@@ -755,6 +717,88 @@ void generate_interactive_session(int argc, char* argv[]) {
 
 // --- Helper and Utility Functions ---
 
+/**
+ * @brief Builds the request, sends it to the Gemini API, and handles the streaming response.
+ * @param state The current application state.
+ * @param full_response_out A pointer to a char pointer that will be allocated and filled
+ *                          with the complete model response on success. The caller is
+ *                          responsible for freeing this memory.
+ * @return true if the API call was successful (HTTP 200), false otherwise.
+ */
+bool send_api_request(AppState* state, char** full_response_out) {
+    *full_response_out = NULL; // Initialize output parameter
+
+    cJSON* root = build_request_json(state);
+    if (!root) {
+        fprintf(stderr, "Error: Failed to build JSON request.\n");
+        return false;
+    }
+
+    char* json_string = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json_string) {
+        fprintf(stderr, "Error: Failed to print JSON to string.\n");
+        return false;
+    }
+
+    GzipResult compressed_result = gzip_compress((unsigned char*)json_string, strlen(json_string));
+    free(json_string);
+    if (!compressed_result.data) {
+        fprintf(stderr, "Error: Failed to compress request payload.\n");
+        return false;
+    }
+
+    bool success = false;
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        char full_api_url[256], auth_header[256], origin_header[256];
+        snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, "streamGenerateContent?alt=sse");
+        snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
+        snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
+
+        struct curl_slist* headers = NULL;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, "Content-Encoding: gzip");
+        headers = curl_slist_append(headers, auth_header);
+        if (strcmp(state->origin, "default") != 0) {
+            headers = curl_slist_append(headers, origin_header);
+        }
+
+        MemoryStruct chunk = { .buffer = malloc(1), .size = 0, .full_response = malloc(1), .full_response_size = 0 };
+        if (!chunk.buffer || !chunk.full_response) {
+            fprintf(stderr, "Error: Failed to allocate memory for curl response chunk.\n");
+        } else {
+            chunk.buffer[0] = '\0';
+            chunk.full_response[0] = '\0';
+
+            curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_result.data);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
+            printf("\n"); // Start response on a new line
+
+            CURLcode res = curl_easy_perform(curl);
+            long http_code = 0;
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+            if (res == CURLE_OK && http_code == 200) {
+                *full_response_out = chunk.full_response; // Transfer ownership
+                success = true;
+            } else {
+                fprintf(stderr, "\nAPI call failed (HTTP code: %ld, Curl code: %d)\n", http_code, res);
+                parse_and_print_error_json(chunk.buffer);
+                free(chunk.full_response); // Clean up on failure
+            }
+        }
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
+        if (chunk.buffer) free(chunk.buffer);
+    }
+    free(compressed_result.data);
+    return success;
+}
 /**
  * @brief Safely reads a string value from a cJSON object into a fixed-size buffer.
  * @param obj The cJSON object to read from.
@@ -998,76 +1042,15 @@ void generate_non_interactive_response(int argc, char* argv[]) {
     add_content_to_history(&state.history, "user", current_turn_parts, total_parts_this_turn);
     free(current_turn_parts); // History function makes its own copies
 
-    cJSON* root = build_request_json(&state);
-    char* json_string = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    GzipResult compressed_result = gzip_compress((unsigned char*)json_string, strlen(json_string));
-    free(json_string);
-
-    CURL* curl = curl_easy_init();
-    if (curl) {
-        char full_api_url[256], auth_header[256], origin_header[256];
-        // Use the NON-STREAMING endpoint
-        snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state.model_name, "generateContent");
-        snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state.api_key);
-        snprintf(origin_header, sizeof(origin_header), "Origin: %s", state.origin);
-        struct curl_slist* headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, "Content-Encoding: gzip");
-        headers = curl_slist_append(headers, auth_header);
-        if (strcmp(state.origin, "default") != 0) { headers = curl_slist_append(headers, origin_header); }
-
-        MemoryStruct chunk = { .buffer = malloc(1), .size = 0 };
-        chunk.buffer[0] = '\0';
-
-        curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_result.data);
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
-        // Use the simple memory callback, not the streaming one
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_memory_struct_callback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-
-        CURLcode res = curl_easy_perform(curl);
-        long http_code = 0;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-        if (res == CURLE_OK && http_code == 200) {
-            cJSON* json_resp = cJSON_Parse(chunk.buffer);
-            if (json_resp) {
-                cJSON* candidates = cJSON_GetObjectItem(json_resp, "candidates");
-                if (cJSON_IsArray(candidates) && cJSON_GetArraySize(candidates) > 0) {
-                    cJSON* candidate = cJSON_GetArrayItem(candidates, 0);
-                    cJSON* content = cJSON_GetObjectItem(candidate, "content");
-                    cJSON* parts = cJSON_GetObjectItem(content, "parts");
-
-                    if (cJSON_IsArray(parts)) {
-                        cJSON* part_item = NULL;
-                        cJSON_ArrayForEach(part_item, parts) {
-                            cJSON* text = cJSON_GetObjectItem(part_item, "text");
-                            if (cJSON_IsString(text) && text->valuestring != NULL) {
-                                // Print each part's text.
-                                // Use fputs to avoid printf adding extra newlines if the chunk already has one.
-                                fputs(text->valuestring, stdout);
-                            }
-                        }
-                        // Add a final newline for clean shell output.
-                        printf("\n");
-                    }
-                }
-                cJSON_Delete(json_resp);
-            }
-        } else {
-            fprintf(stderr, "API call failed (HTTP code: %ld, Curl code: %d)\n", http_code, res);
-            parse_and_print_error_json(chunk.buffer);
-        }
-
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
-        if (chunk.buffer) free(chunk.buffer);
+    char* model_response_text = NULL;
+    if (send_api_request(&state, &model_response_text)) {
+        // Success: streaming callback already printed the output.
+        printf("\n"); // Add a final newline for clean shell output.
+        free(model_response_text); // We don't need to store it.
+    } else {
+        // Failure: error was already printed by the helper function.
     }
-    free(compressed_result.data);
-
+    
     // --- 4. Final Cleanup ---
     if(state.last_model_response) free(state.last_model_response);
     if(state.system_prompt) free(state.system_prompt);
