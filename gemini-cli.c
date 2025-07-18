@@ -112,6 +112,7 @@ static void json_read_int(const cJSON* obj, const char* key, int* target);
 static void json_read_bool(const cJSON* obj, const char* key, bool* target);
 static void json_read_strdup(const cJSON* obj, const char* key, char** target);
 bool send_api_request(AppState* state, char** full_response_out);
+bool build_session_path(const char* session_name, char* path_buffer, size_t buffer_size);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -288,10 +289,11 @@ void generate_interactive_session(int argc, char* argv[]) {
                        "  /exit, /quit               - Exit the program.\n"
                        "  /clear                     - Clear history and attachments for a new chat.\n"
                        "  /stats                     - Show session statistics (tokens, model, etc.).\n"
-                       "  /system <prompt>           - Set a system prompt for the conversation.\n"
+                       "  /system [prompt]           - Set/show the system prompt for the conversation.\n"
                        "  /clear_system              - Remove the system prompt.\n"
-                       "  /budget <tokens>           - Set the max thinking budget for the model.\n"
-                       "  /maxtokens <tokens>        - Set the max output tokens for the response.\n"
+                       "  /budget [tokens]           - Set/show the max thinking budget for the model.\n"
+                       "  /maxtokens [tokens]        - Set/show the max output tokens for the response.\n"
+                       "  /temp [temperature]        - Set/show the temperature for the response.\n"
                        "  /attach <file> [prompt]    - Attach a file. Optionally add prompt on same line.\n"
                        "  /paste                     - Paste text from stdin as an attachment.\n"
                        "  /savelast <file.txt>       - Save the last model response to a text file.\n"
@@ -323,93 +325,39 @@ void generate_interactive_session(int argc, char* argv[]) {
                     list_sessions();
                 } else if (strcmp(sub_command, "save") == 0) {
                     if (session_name[0] == '\0') {
-                        fprintf(stderr,"Usage: /session save <name>\n");
-                } else if (is_session_name_safe(session_name)) {
-                    char sessions_path[PATH_MAX];
-                    char file_path[PATH_MAX];
-
-                    // Build the base sessions_path
-                    get_sessions_path(sessions_path, sizeof(sessions_path));
-
-                    // Measure current lengths
-                    size_t base_len = strnlen(sessions_path, sizeof(sessions_path));
-                    size_t name_len = strnlen(session_name, sizeof(session_name));
-
-                    // Compute required size: 
-                    // base_len + 1 ('/') + name_len + 5 (".json") + 1 ('\0')
-                    if (base_len + 1 + name_len + 5 + 1 > sizeof(file_path)) {
-                        // handle error: combined path would overflow
-                        fprintf(stderr, "Error: session name too long for path buffer\n");
+                        fprintf(stderr, "Usage: /session save <name>\n");
                     } else {
-                        // Safe to concatenate
-                        snprintf(file_path, sizeof(file_path),
-                                 "%s/%s.json", sessions_path, session_name);
-
-                        save_history_to_file(&state, file_path);
-
-                        // Update current_session_name (ensure null-termination)
-                        strncpy(state.current_session_name,
-                                session_name,
-                                sizeof(state.current_session_name) - 1);
-                        state.current_session_name
-                            [sizeof(state.current_session_name) - 1] = '\0';
-                    }
-                }
-
-                } else if (strcmp(sub_command, "load") == 0) {
-                    if (session_name[0] == '\0') {
-                        fprintf(stderr,"Usage: /session load <name>\n");
-                    } else if (is_session_name_safe(session_name)) {
-                        char sessions_path[PATH_MAX];
                         char file_path[PATH_MAX];
-
-                        get_sessions_path(sessions_path, sizeof(sessions_path));
-
-                        size_t base_len = strnlen(sessions_path, sizeof(sessions_path));
-                        size_t name_len = strnlen(session_name, sizeof(session_name));
-                        // +1 for '/', +5 for ".json", +1 for '\0'
-                        if (base_len + 1 + name_len + 5 + 1 > sizeof(file_path)) {
-                            fprintf(stderr, "Error: session name '%s' results in path too long\n",
-                                    session_name);
-                        } else {
-                            snprintf(file_path, sizeof(file_path),
-                                     "%s/%s.json", sessions_path, session_name);
-                            load_history_from_file(&state, file_path);
-
-                            strncpy(state.current_session_name,
-                                    session_name,
-                                    sizeof(state.current_session_name) - 1);
-                            state.current_session_name
-                                [sizeof(state.current_session_name) - 1] = '\0';
+                        if (build_session_path(session_name, file_path, sizeof(file_path))) {
+                            save_history_to_file(&state, file_path);
+                            strncpy(state.current_session_name, session_name, sizeof(state.current_session_name) - 1);
+                            state.current_session_name[sizeof(state.current_session_name) - 1] = '\0';
                         }
                     }
-
+                } else if (strcmp(sub_command, "load") == 0) {
+                    if (session_name[0] == '\0') {
+                        fprintf(stderr, "Usage: /session load <name>\n");
+                    } else {
+                        char file_path[PATH_MAX];
+                        if (build_session_path(session_name, file_path, sizeof(file_path))) {
+                            load_history_from_file(&state, file_path);
+                            strncpy(state.current_session_name, session_name, sizeof(state.current_session_name) - 1);
+                            state.current_session_name[sizeof(state.current_session_name) - 1] = '\0';
+                        }
+                    }
                 } else if (strcmp(sub_command, "delete") == 0) {
                     if (session_name[0] == '\0') {
-                        fprintf(stderr,"Usage: /session delete <name>\n");
-                    } else if (is_session_name_safe(session_name)) {
-                        char sessions_path[PATH_MAX];
+                        fprintf(stderr, "Usage: /session delete <name>\n");
+                    } else {
                         char file_path[PATH_MAX];
-
-                        get_sessions_path(sessions_path, sizeof(sessions_path));
-
-                        size_t base_len = strnlen(sessions_path, sizeof(sessions_path));
-                        size_t name_len = strnlen(session_name, sizeof(session_name));
-                        // +1 for '/', +5 for ".json", +1 for '\0'
-                        if (base_len + 1 + name_len + 5 + 1 > sizeof(file_path)) {
-                            fprintf(stderr, "Error: session name '%s' results in path too long\n",
-                                    session_name);
-                        } else {
-                            snprintf(file_path, sizeof(file_path),
-                                     "%s/%s.json", sessions_path, session_name);
+                        if (build_session_path(session_name, file_path, sizeof(file_path))) {
                             if (remove(file_path) == 0) {
-                                fprintf(stderr,"Session '%s' deleted.\n", session_name);
+                                fprintf(stderr, "Session '%s' deleted.\n", session_name);
                             } else {
                                 perror("Error deleting session");
                             }
                         }
                     }
-
                 } else {
                     fprintf(stderr,"Unknown session command: '%s'. Use '/help' to see options.\n", sub_command);
                 }
@@ -422,16 +370,44 @@ void generate_interactive_session(int argc, char* argv[]) {
                 fprintf(stderr,"System Prompt: %s\n", state.system_prompt ? state.system_prompt : "Not set");
                 fprintf(stderr,"Messages in history: %d\n", state.history.num_contents);
                 fprintf(stderr,"Pending attachments: %d\n", state.num_attached_parts);
-                if (state.history.num_contents==0) continue;
+
+                if (state.history.num_contents == 0 && state.num_attached_parts == 0) {
+                    fprintf(stderr,"---------------------\n");
+                    continue;
+                }
+
+                // Temporarily add pending attachments to history for an accurate token count
+                if (state.num_attached_parts > 0) {
+                    add_content_to_history(&state.history, "user", state.attached_parts, state.num_attached_parts);
+                }
+
                 int tokens = get_token_count(&state);
-                if (tokens >= 0) fprintf(stderr,"Total tokens in context: %d\n", tokens);
+
+                // Clean up the temporary history modification by removing the last entry
+                if (state.num_attached_parts > 0) {
+                    free_content(&state.history.contents[state.history.num_contents - 1]);
+                    state.history.num_contents--;
+                }
+
+                if (tokens >= 0) fprintf(stderr,"Total tokens in context (incl. pending): %d\n", tokens);
                 else fprintf(stderr,"Could not retrieve token count.\n");
                 fprintf(stderr,"---------------------\n");
             } else if (strcmp(command_buffer, "/system") == 0) {
-                if (state.system_prompt) free(state.system_prompt);
-                state.system_prompt = strdup(arg_start);
-                if (!state.system_prompt) { fprintf(stderr, "Error: Failed to allocate memory for system prompt.\n"); }
-                else { fprintf(stderr,"System prompt set to: '%s'\n", state.system_prompt); }
+                if (*arg_start == '\0') {
+                	  if (state.system_prompt) {
+                        fprintf(stderr, "System prompt is:\n%s\n", state.system_prompt);
+                    } else {
+                    	  fprintf(stderr, "System prompt is empty.\n");
+                    }
+                } else {
+                    if (state.system_prompt) free(state.system_prompt);
+                    state.system_prompt = strdup(arg_start);
+                    if (!state.system_prompt) {
+                    	  fprintf(stderr, "Error: Failed to allocate memory for system prompt.\n");
+                    } else {
+                    	  fprintf(stderr,"System prompt set to: '%s'\n", state.system_prompt);
+                    }
+                }
             } else if (strcmp(command_buffer, "/clear_system") == 0) {
                 if (state.system_prompt) {
                     free(state.system_prompt);
@@ -443,7 +419,7 @@ void generate_interactive_session(int argc, char* argv[]) {
 
             } else if (strcmp(command_buffer, "/budget") == 0) {
                 if (*arg_start == '\0') {
-                    fprintf(stderr, "Usage: /budget <tokens>\n");
+                    fprintf(stderr, "Thinking budget: %d tokens.\n", state.thinking_budget);
                 } else {
                     char* endptr;
                     long budget = strtol(arg_start, &endptr, 10);
@@ -461,7 +437,7 @@ void generate_interactive_session(int argc, char* argv[]) {
                 }
             } else if (strcmp(command_buffer, "/maxtokens") == 0) {
                 if (*arg_start == '\0') {
-                    fprintf(stderr, "Usage: /maxtokens <tokens>\n");
+                    fprintf(stderr, "Max output tokens: %d tokens.\n", state.max_output_tokens);
                 } else {
                     char* endptr;
                     long tokens = strtol(arg_start, &endptr, 10);
@@ -470,6 +446,19 @@ void generate_interactive_session(int argc, char* argv[]) {
                     } else {
                         state.max_output_tokens = (int)tokens;
                         fprintf(stderr, "Max output tokens set to %d.\n", state.max_output_tokens);
+                    }
+                }
+            } else if (strcmp(command_buffer, "/temp") == 0) {
+                if (*arg_start == '\0') {
+                    fprintf(stderr, "Temperature: %.2f.\n", state.temperature);
+                } else {
+                    char* endptr;
+                    float temp = strtof(arg_start, &endptr);
+                    if (endptr == arg_start || *endptr != '\0' || temp <= 0) {
+                        fprintf(stderr, "Error: Invalid temperature value.\n");
+                    } else {
+                        state.temperature = temp;
+                        fprintf(stderr, "Temperature set to %.2f.\n", state.temperature);
                     }
                 }
             } else if (strcmp(command_buffer, "/save") == 0) {
@@ -716,6 +705,34 @@ void generate_interactive_session(int argc, char* argv[]) {
 }
 
 // --- Helper and Utility Functions ---
+
+/**
+ * @brief Builds the full path for a session file and validates the name.
+ * @param session_name The name of the session provided by the user.
+ * @param path_buffer A buffer to store the resulting full path.
+ * @param buffer_size The size of the path_buffer.
+ * @return true if the path was successfully built, false otherwise (e.g., unsafe name, path too long).
+ */
+bool build_session_path(const char* session_name, char* path_buffer, size_t buffer_size) {
+    if (!is_session_name_safe(session_name)) {
+        // The is_session_name_safe function already prints a specific error.
+        return false;
+    }
+
+    char sessions_path[PATH_MAX];
+    get_sessions_path(sessions_path, sizeof(sessions_path));
+
+    // Check for potential buffer overflow before concatenation.
+    // Required size = base_path + '/' + session_name + ".json" + '\0'
+    if (strnlen(sessions_path, sizeof(sessions_path)) + 1 + strlen(session_name) + 5 + 1 > buffer_size) {
+        fprintf(stderr, "Error: Session name '%s' results in a path that is too long.\n", session_name);
+        return false;
+    }
+
+    // Safely construct the final path.
+    snprintf(path_buffer, buffer_size, "%s/%s.json", sessions_path, session_name);
+    return true;
+}
 
 /**
  * @brief Builds the request, sends it to the Gemini API, and handles the streaming response.
@@ -1612,7 +1629,7 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         if (!buffer) { fclose(stream); fprintf(stderr, "Error: malloc failed for file buffer.\n"); return; }
         total_read = fread(buffer, 1, size, stream);
     } else { // Unknown size from stdin or an empty file
-        size_t capacity = 4096;
+        size_t capacity = 1*1024*1024;
         buffer = malloc(capacity);
         if (!buffer) {
             if (is_file) fclose(stream);
