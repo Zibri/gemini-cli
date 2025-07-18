@@ -11,7 +11,9 @@
  * %APPDATA%\gemini-cli\config.json (Windows).
  *
  * It is designed to be portable between POSIX systems and Windows.
- * gcc prompt.c cJSON.c -o prompt -lcurl -lz -lreadline
+ * gcc -s -O3 gemini-cli.c cJSON.c -o prompt -lcurl -lz -lreadline
+ * or
+ * clang -s -O3 gemini-cli.c cJSON.c -o prompt -lcurl -lz -lreadline
  *
  */
 
@@ -101,7 +103,6 @@ void get_sessions_path(char* buffer, size_t buffer_size);
 bool is_session_name_safe(const char* name);
 void list_sessions();
 void clear_session_state(AppState* state);
-void generate_non_interactive_response(int argc, char* argv[]);
 static size_t write_to_memory_struct_callback(void* contents, size_t size, size_t nmemb, void* userp);
 void free_pending_attachments(AppState* state);
 void initialize_default_state(AppState* state);
@@ -177,7 +178,7 @@ static size_t write_memory_callback(void* contents, size_t size, size_t nmemb, v
 
 
 // --- Main Application Logic ---
-void generate_interactive_session(int argc, char* argv[]) {
+void generate_interactive_session(int argc, char* argv[], bool interactive) {
     AppState state = {0};
 
     initialize_default_state(&state);
@@ -220,42 +221,60 @@ void generate_interactive_session(int argc, char* argv[]) {
         state.thinking_budget = 16384;
     }
     
-    fprintf(stderr,"Using model: %s, Temperature: %.2f, Seed: %d\n", state.model_name, state.temperature, state.seed);
-    if (state.max_output_tokens > 0) { fprintf(stderr,"Max Output Tokens: %d\n", state.max_output_tokens); }
-    if (state.thinking_budget > 0) {
-    	 fprintf(stderr,"Thinking Budget: %d tokens\n", state.thinking_budget);
+    if (interactive) {
+        fprintf(stderr,"Using model: %s, Temperature: %.2f, Seed: %d\n", state.model_name, state.temperature, state.seed);
+        if (state.max_output_tokens > 0) {
+        	fprintf(stderr,"Max Output Tokens: %d\n", state.max_output_tokens);
+        }
+        if (state.thinking_budget > 0) {
+        	 fprintf(stderr,"Thinking Budget: %d tokens\n", state.thinking_budget);
+        } else {
+        	 fprintf(stderr,"Thinking Budget: automatic\n");
+        }
+        
+            fprintf(stderr,"Google grounding: %s\n", state.google_grounding?"ON":"OFF");
+            fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
     } else {
-    	 fprintf(stderr,"Thinking Budget: automatic\n");
+
+    // --- 2. Read from stdin if it's a pipe ---
+    #ifdef _WIN32
+        if (!_isatty(_fileno(stdin))) {
+            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
+        }
+    #else
+        if (!isatty(fileno(stdin))) {
+            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
+        }
+    #endif
+    	
     }
-    
-    fprintf(stderr,"Google grounding: %s\n", state.google_grounding?"ON":"OFF");
-    fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
 	
     char* key_from_env = getenv("GEMINI_API_KEY");
     if (key_from_env) {
         strncpy(state.api_key, key_from_env, sizeof(state.api_key) - 1);
-        fprintf(stderr,"API Key loaded from environment variable.\n");
+        if (interactive) fprintf(stderr,"API Key loaded from environment variable.\n");
     } else if (state.api_key[0] == '\0') {
         get_api_key_securely(state.api_key, sizeof(state.api_key));
     } else {
-        fprintf(stderr,"API Key loaded from configuration file.\n");
+        if (interactive) fprintf(stderr,"API Key loaded from configuration file.\n");
     }
 
     char* origin_from_env = getenv("GEMINI_API_KEY_ORIGIN");
     if (origin_from_env) {
         strncpy(state.origin, origin_from_env, sizeof(state.origin) - 1);
-        fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
+        if (interactive) fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
     }
-
-    if (state.num_attached_parts > 0) {
-        fprintf(stderr,"Initial attachments loaded. Enter your prompt to send them.\n");
+    
+    if (interactive) {
+        if (state.num_attached_parts > 0) {
+            fprintf(stderr,"Initial attachments loaded. Enter your prompt to send them.\n");
+        }
+        fprintf(stderr, "Interactive session started. Type '/help' for commands, '/exit' or '/quit' to end.\n");
     }
-
-    fprintf(stderr, "Interactive session started. Type '/help' for commands, '/exit' or '/quit' to end.\n");
 
     // If an initial prompt was constructed from the arguments, execute it immediately.
     if (initial_prompt_len > 0) {
-        fprintf(stderr, "Initial prompt provided. Sending request...\n");
+        if (interactive) fprintf(stderr, "Initial prompt provided. Sending request...\n");
 
         int total_parts_this_turn = state.num_attached_parts + 1; // +1 for the text prompt
 
@@ -279,12 +298,12 @@ void generate_interactive_session(int argc, char* argv[]) {
             free_pending_attachments(&state);
             free(current_turn_parts);
             
-            printf("\n");
+            if (interactive) printf("\n");
 
             // Send the API request
             char* model_response_text = NULL;
             if (send_api_request(&state, &model_response_text)) {
-                printf("\n"); // Final newline after streaming response
+                if (interactive) printf("\n"); // Final newline after streaming response
                 if (state.last_model_response) free(state.last_model_response);
                 state.last_model_response = model_response_text; // Take ownership
 
@@ -308,6 +327,7 @@ void generate_interactive_session(int argc, char* argv[]) {
     linenoiseHistoryLoad(history_path);
 #endif
 
+if (interactive) {
     char* line;
     char prompt_buffer[16384];
 
@@ -765,7 +785,7 @@ void generate_interactive_session(int argc, char* argv[]) {
         
         free(line);
     }
-
+}
     if(state.last_model_response) free(state.last_model_response);
     if(state.system_prompt) free(state.system_prompt);
     free_history(&state.history);
@@ -773,7 +793,7 @@ void generate_interactive_session(int argc, char* argv[]) {
         free(state.attached_parts[i].mime_type);
         free(state.attached_parts[i].base64_data);
     }
-    fprintf(stderr,"\nExiting session.\n");
+    if (interactive) fprintf(stderr,"\nExiting session.\n");
 }
 
 // --- Helper and Utility Functions ---
@@ -1059,94 +1079,6 @@ void initialize_default_state(AppState* state) {
         state->thinking_budget = 32768;
     }
 */
-}
-
-/**
- * @brief Handles a single, non-interactive request from piped stdin and/or argv.
- */
-void generate_non_interactive_response(int argc, char* argv[]) {
-    AppState state = {0};
-    
-    initialize_default_state(&state);
-
-    load_configuration(&state);
-
-    // --- 1. Argument and State Setup (reused from interactive mode) ---
-    char prompt_buffer[16384] = {0};
-    size_t prompt_len = 0;
-
-    int first_arg_index = parse_common_options(argc, argv, &state);
-
-    // Process remaining arguments as the prompt
-    for (int i = first_arg_index; i < argc; i++) {
-        size_t arg_len = strlen(argv[i]);
-        if (prompt_len + arg_len + 2 < sizeof(prompt_buffer)) {
-            char* p = prompt_buffer + prompt_len;
-            size_t remaining = sizeof(prompt_buffer) - prompt_len;
-            int written = snprintf(p, remaining, "%s ", argv[i]);
-            if (written > 0 && (size_t)written < remaining) {
-                prompt_len += written;
-            }
-        }
-    }
-
-    if ((strstr(state.model_name, "flash") != NULL) && (state.thinking_budget>16384)) {
-        state.thinking_budget = 16384;
-    }
-    
-    char* key_from_env = getenv("GEMINI_API_KEY");
-    if (key_from_env) {
-        strncpy(state.api_key, key_from_env, sizeof(state.api_key) - 1);
-    } else if (state.api_key[0] == '\0') {
-        fprintf(stderr, "Error: API Key not found. Please set GEMINI_API_KEY environment variable.\n");
-        return;
-    }
-
-    // --- 2. Read from stdin if it's a pipe ---
-    #ifdef _WIN32
-        if (!_isatty(_fileno(stdin))) {
-            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
-        }
-    #else
-        if (!isatty(fileno(stdin))) {
-            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
-        }
-    #endif
-
-
-    // --- 3. Build and Send the Request ---
-    int total_parts_this_turn = state.num_attached_parts + (prompt_len > 0 ? 1 : 0);
-    if (total_parts_this_turn == 0) {
-        fprintf(stderr, "Error: No prompt or piped data provided.\n");
-        return;
-    }
-
-    Part* current_turn_parts = malloc(sizeof(Part) * total_parts_this_turn);
-    if (!current_turn_parts) { return; }
-
-    int current_part_index = 0;
-    for(int i=0; i < state.num_attached_parts; i++) current_turn_parts[current_part_index++] = state.attached_parts[i];
-    if (prompt_len > 0) { current_turn_parts[current_part_index] = (Part){ .type = PART_TYPE_TEXT, .text = prompt_buffer, .mime_type = NULL, .base64_data = NULL }; }
-    add_content_to_history(&state.history, "user", current_turn_parts, total_parts_this_turn);
-    free(current_turn_parts); // History function makes its own copies
-
-    char* model_response_text = NULL;
-    if (send_api_request(&state, &model_response_text)) {
-        // Success: streaming callback already printed the output.
-        //printf("\n"); // Add a final newline for clean shell output.
-        free(model_response_text); // We don't need to store it.
-    } else {
-        // Failure: error was already printed by the helper function.
-    }
-    
-    // --- 4. Final Cleanup ---
-    if(state.last_model_response) free(state.last_model_response);
-    if(state.system_prompt) free(state.system_prompt);
-    free_history(&state.history);
-    for(int i = 0; i < state.num_attached_parts; i++) {
-        free(state.attached_parts[i].mime_type);
-        free(state.attached_parts[i].base64_data);
-    }
 }
 
 void clear_session_state(AppState* state) {
@@ -1830,11 +1762,11 @@ int main(int argc, char* argv[]) {
     if (is_stdin_a_terminal && is_stdout_a_terminal) {
         // Both input and output are the user's keyboard/screen.
         // Start the full interactive session.
-        generate_interactive_session(argc, argv);
+        generate_interactive_session(argc, argv, true);
     } else {
         // Either input is a pipe/file or output is a pipe/file.
         // Run in non-interactive/scripting mode.
-        generate_non_interactive_response(argc, argv);
+        generate_interactive_session(argc, argv, false);
     }
 
     curl_global_cleanup();
