@@ -1037,13 +1037,22 @@ void generate_non_interactive_response(int argc, char* argv[]) {
             if (json_resp) {
                 cJSON* candidates = cJSON_GetObjectItem(json_resp, "candidates");
                 if (cJSON_IsArray(candidates) && cJSON_GetArraySize(candidates) > 0) {
-                    cJSON* content = cJSON_GetObjectItem(cJSON_GetArrayItem(candidates, 0), "content");
+                    cJSON* candidate = cJSON_GetArrayItem(candidates, 0);
+                    cJSON* content = cJSON_GetObjectItem(candidate, "content");
                     cJSON* parts = cJSON_GetObjectItem(content, "parts");
-                    if (cJSON_IsArray(parts) && cJSON_GetArraySize(parts) > 0) {
-                        cJSON* text = cJSON_GetObjectItem(cJSON_GetArrayItem(parts, 0), "text");
-                        if (cJSON_IsString(text)) {
-                            printf("%s\n", text->valuestring);
+
+                    if (cJSON_IsArray(parts)) {
+                        cJSON* part_item = NULL;
+                        cJSON_ArrayForEach(part_item, parts) {
+                            cJSON* text = cJSON_GetObjectItem(part_item, "text");
+                            if (cJSON_IsString(text) && text->valuestring != NULL) {
+                                // Print each part's text.
+                                // Use fputs to avoid printf adding extra newlines if the chunk already has one.
+                                fputs(text->valuestring, stdout);
+                            }
                         }
+                        // Add a final newline for clean shell output.
+                        printf("\n");
                     }
                 }
                 cJSON_Delete(json_resp);
