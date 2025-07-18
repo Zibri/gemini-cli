@@ -11,9 +11,9 @@
  * %APPDATA%\gemini-cli\config.json (Windows).
  *
  * It is designed to be portable between POSIX systems and Windows.
- * gcc -s -O3 gemini-cli.c cJSON.c -o prompt -lcurl -lz -lreadline
+ * gcc -s -O3 gemini-cli.c cJSON.c -o gemini-cli -lcurl -lz -lreadline
  * or
- * clang -s -O3 gemini-cli.c cJSON.c -o prompt -lcurl -lz -lreadline
+ * clang -s -O3 gemini-cli.c cJSON.c -o gemini-cli -lcurl -lz -lreadline
  *
  */
 
@@ -115,6 +115,7 @@ static void json_read_bool(const cJSON* obj, const char* key, bool* target);
 static void json_read_strdup(const cJSON* obj, const char* key, char** target);
 bool send_api_request(AppState* state, char** full_response_out);
 bool build_session_path(const char* session_name, char* path_buffer, size_t buffer_size);
+long perform_api_curl_request(AppState* state, const char* endpoint, const char* compressed_payload, size_t payload_size, size_t (*callback)(void*, size_t, size_t, void*), void* callback_data);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -178,7 +179,7 @@ static size_t write_memory_callback(void* contents, size_t size, size_t nmemb, v
 
 
 // --- Main Application Logic ---
-void generate_interactive_session(int argc, char* argv[], bool interactive) {
+void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_terminal) {
     AppState state = {0};
 
     initialize_default_state(&state);
@@ -236,16 +237,10 @@ void generate_interactive_session(int argc, char* argv[], bool interactive) {
             fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
     } else {
 
-    // --- 2. Read from stdin if it's a pipe ---
-    #ifdef _WIN32
-        if (!_isatty(_fileno(stdin))) {
+        // --- 2. Read from stdin if it's a pipe ---
+        if (!is_stdin_a_terminal) {
             handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
         }
-    #else
-        if (!isatty(fileno(stdin))) {
-            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
-        }
-    #endif
     	
     }
 	
@@ -729,7 +724,11 @@ if (interactive) {
                     fprintf(stderr,"Unknown command for '/history'. Try '/history attachments'.\n");
                 }
             } else if (strcmp(command_buffer, "/paste") == 0) {
-                fprintf(stderr,"Pasting content. Press Ctrl+D (Unix) or Ctrl+Z then Enter (Windows) when done.\n");
+#ifdef _WIN32
+                fprintf(stderr, "Pasting content. Press Ctrl+Z then Enter when done.\n");
+#else
+                fprintf(stderr, "Pasting content. Press Ctrl+D when done.\n");
+#endif
                 handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
             } else {
                 fprintf(stderr,"Unknown command: %s. Type /help for a list of commands.\n", command_buffer);
@@ -799,6 +798,28 @@ if (interactive) {
 // --- Helper and Utility Functions ---
 
 /**
+ * @brief Gets the base path for the application's configuration/data directory, creating it if it doesn't exist.
+ * @param buffer A buffer to store the resulting path.
+ * @param buffer_size The size of the buffer.
+ */
+void get_base_app_path(char* buffer, size_t buffer_size) {
+    const char* config_dir_name = "gemini-cli";
+#ifdef _WIN32
+    char* base_path = getenv("APPDATA");
+    if (!base_path) { buffer[0] = '\0'; return; }
+    snprintf(buffer, buffer_size, "%s\\%s", base_path, config_dir_name);
+    MKDIR(buffer);
+#else
+    char* base_path = getenv("HOME");
+    if (!base_path) { buffer[0] = '\0'; return; }
+    char dir_path[PATH_MAX];
+    snprintf(dir_path, sizeof(dir_path), "%s/.config", base_path);
+    MKDIR(dir_path);
+    snprintf(buffer, buffer_size, "%s/.config/%s", base_path, config_dir_name);
+    MKDIR(buffer);
+#endif
+}
+/**
  * @brief Builds the full path for a session file and validates the name.
  * @param session_name The name of the session provided by the user.
  * @param path_buffer A buffer to store the resulting full path.
@@ -835,7 +856,7 @@ bool build_session_path(const char* session_name, char* path_buffer, size_t buff
  * @return true if the API call was successful (HTTP 200), false otherwise.
  */
 bool send_api_request(AppState* state, char** full_response_out) {
-    *full_response_out = NULL; // Initialize output parameter
+    *full_response_out = NULL;
 
     cJSON* root = build_request_json(state);
     if (!root) {
@@ -857,53 +878,29 @@ bool send_api_request(AppState* state, char** full_response_out) {
         return false;
     }
 
-    bool success = false;
-    CURL* curl = curl_easy_init();
-    if (curl) {
-        char full_api_url[256], auth_header[256], origin_header[256];
-        snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, "streamGenerateContent?alt=sse");
-        snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
-        snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
-
-        struct curl_slist* headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/json");
-        headers = curl_slist_append(headers, "Content-Encoding: gzip");
-        headers = curl_slist_append(headers, auth_header);
-        if (strcmp(state->origin, "default") != 0) {
-            headers = curl_slist_append(headers, origin_header);
-        }
-
-        MemoryStruct chunk = { .buffer = malloc(1), .size = 0, .full_response = malloc(1), .full_response_size = 0 };
-        if (!chunk.buffer || !chunk.full_response) {
-            fprintf(stderr, "Error: Failed to allocate memory for curl response chunk.\n");
-        } else {
-            chunk.buffer[0] = '\0';
-            chunk.full_response[0] = '\0';
-
-            curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_result.data);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_memory_callback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-
-            CURLcode res = curl_easy_perform(curl);
-            long http_code = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-            if (res == CURLE_OK && http_code == 200) {
-                *full_response_out = chunk.full_response; // Transfer ownership
-                success = true;
-            } else {
-                fprintf(stderr, "\nAPI call failed (HTTP code: %ld, Curl code: %d)\n", http_code, res);
-                parse_and_print_error_json(chunk.buffer);
-                free(chunk.full_response); // Clean up on failure
-            }
-        }
-        curl_easy_cleanup(curl);
-        curl_slist_free_all(headers);
-        if (chunk.buffer) free(chunk.buffer);
+    MemoryStruct chunk = { .buffer = malloc(1), .size = 0, .full_response = malloc(1), .full_response_size = 0 };
+    if (!chunk.buffer || !chunk.full_response) {
+        fprintf(stderr, "Error: Failed to allocate memory for curl response chunk.\n");
+        free(compressed_result.data);
+        return false;
     }
+    chunk.buffer[0] = '\0';
+    chunk.full_response[0] = '\0';
+
+    long http_code = perform_api_curl_request(state, "streamGenerateContent?alt=sse", (const char*)compressed_result.data, compressed_result.size, write_memory_callback, &chunk);
+
+    bool success = false;
+    if (http_code == 200) {
+        *full_response_out = chunk.full_response; // Transfer ownership
+        success = true;
+    } else {
+        fprintf(stderr, "\nAPI call failed (HTTP code: %ld)\n", http_code);
+        if(http_code < 0) fprintf(stderr, "Curl error: %s\n", curl_easy_strerror(-http_code));
+        parse_and_print_error_json(chunk.buffer);
+        free(chunk.full_response); // Clean up on failure
+    }
+
+    free(chunk.buffer);
     free(compressed_result.data);
     return success;
 }
@@ -1090,33 +1087,20 @@ void clear_session_state(AppState* state) {
     fprintf(stderr,"New session started.\n");
 }
 
-/**
- * @brief Gets the path to the sessions directory, creating it if it doesn't exist.
- */
 void get_sessions_path(char* buffer, size_t buffer_size) {
-    const char* config_dir_name = "gemini-cli";
     const char* sessions_dir_name = "sessions";
+    char base_app_path[PATH_MAX];
+    get_base_app_path(base_app_path, sizeof(base_app_path));
+    if (base_app_path[0] == '\0') {
+        buffer[0] = '\0';
+        return;
+    }
 #ifdef _WIN32
-    char* base_path = getenv("APPDATA");
-    if (!base_path) { buffer[0] = '\0'; return; }
-    char dir_path[PATH_MAX];
-    snprintf(dir_path, sizeof(dir_path), "%s\\%s", base_path, config_dir_name);
-    MKDIR(dir_path);
-    snprintf(dir_path, sizeof(dir_path), "%s\\%s\\%s", base_path, config_dir_name, sessions_dir_name);
-    MKDIR(dir_path);
-    snprintf(buffer, buffer_size, "%s", dir_path);
+    snprintf(buffer, buffer_size, "%s\\%s", base_app_path, sessions_dir_name);
 #else
-    char* base_path = getenv("HOME");
-    if (!base_path) { buffer[0] = '\0'; return; }
-    char dir_path[PATH_MAX];
-    snprintf(dir_path, sizeof(dir_path), "%s/.config", base_path);
-    MKDIR(dir_path);
-    snprintf(dir_path, sizeof(dir_path), "%s/.config/%s", base_path, config_dir_name);
-    MKDIR(dir_path);
-    snprintf(dir_path, sizeof(dir_path), "%s/.config/%s/%s", base_path, config_dir_name, sessions_dir_name);
-    MKDIR(dir_path);
-    snprintf(buffer, buffer_size, "%s", dir_path);
+    snprintf(buffer, buffer_size, "%s/%s", base_app_path, sessions_dir_name);
 #endif
+    MKDIR(buffer);
 }
 
 /**
@@ -1183,25 +1167,31 @@ void list_sessions() {
     }
 #endif
 }
+
 void get_config_path(char* buffer, size_t buffer_size) {
-    const char* config_dir_name = "gemini-cli";
     const char* config_file_name = "config.json";
+    char base_app_path[PATH_MAX];
+    get_base_app_path(base_app_path, sizeof(base_app_path));
+    if (base_app_path[0] == '\0') {
+        buffer[0] = '\0';
+        return;
+    }
+
 #ifdef _WIN32
-    char* base_path = getenv("APPDATA");
-    if (!base_path) { buffer[0] = '\0'; return; }
-    snprintf(buffer, buffer_size, "%s\\%s", base_path, config_dir_name);
-    MKDIR(buffer);
-    snprintf(buffer, buffer_size, "%s\\%s\\%s", base_path, config_dir_name, config_file_name);
+    const char* separator = "\\";
 #else
-    char* base_path = getenv("HOME");
-    if (!base_path) { buffer[0] = '\0'; return; }
-    char dir_path[PATH_MAX];
-    snprintf(dir_path, sizeof(dir_path), "%s/.config", base_path);
-    MKDIR(dir_path);
-    snprintf(dir_path, sizeof(dir_path), "%s/.config/%s", base_path, config_dir_name);
-    MKDIR(dir_path);
-    snprintf(buffer, buffer_size, "%s/.config/%s/%s", base_path, config_dir_name, config_file_name);
+    const char* separator = "/";
 #endif
+
+    // Check for potential buffer overflow before concatenation.
+    // Required size = base_path + separator + config_file_name + '\0'
+    if (strlen(base_app_path) + strlen(separator) + strlen(config_file_name) + 1 > buffer_size) {
+        fprintf(stderr, "Error: Resolved configuration path is too long.\n");
+        buffer[0] = '\0';
+        return;
+    }
+
+    snprintf(buffer, buffer_size, "%s%s%s", base_app_path, separator, config_file_name);
 }
 
 void load_configuration(AppState* state) {
@@ -1369,40 +1359,33 @@ static size_t write_to_memory_struct_callback(void* contents, size_t size, size_
 }
 
 int get_token_count(AppState* state) {
-    CURL* curl = curl_easy_init();
-    if (!curl) return -1;
     cJSON* root = build_request_json(state);
     cJSON_DeleteItemFromObject(root, "generationConfig");
     cJSON_DeleteItemFromObject(root, "tools");
-    if (!root) { curl_easy_cleanup(curl); return -1; }
+    if (!root) return -1;
+
     char* json_string = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
+    if (!json_string) return -1;
+
     GzipResult compressed_result = gzip_compress((unsigned char*)json_string, strlen(json_string));
     free(json_string);
-    if (!compressed_result.data) { fprintf(stderr, "Failed to compress payload for token count.\n"); curl_easy_cleanup(curl); return -1; }
-    char full_api_url[256], auth_header[256], origin_header[256];
-    snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, "countTokens");
-    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
-    snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
-    struct curl_slist* headers = NULL;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, "Content-Encoding: gzip");
-    headers = curl_slist_append(headers, auth_header);
-    if (strcmp(state->origin, "default") != 0) { headers = curl_slist_append(headers, origin_header); }
+    if (!compressed_result.data) {
+        fprintf(stderr, "Failed to compress payload for token count.\n");
+        return -1;
+    }
+
     MemoryStruct chunk = { .buffer = malloc(1), .size = 0 };
-    if (!chunk.buffer) { curl_easy_cleanup(curl); free(compressed_result.data); curl_slist_free_all(headers); return -1; }
+    if (!chunk.buffer) {
+        free(compressed_result.data);
+        return -1;
+    }
     chunk.buffer[0] = '\0';
-    curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_result.data);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)compressed_result.size);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_memory_struct_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
-    CURLcode res = curl_easy_perform(curl);
+
+    long http_code = perform_api_curl_request(state, "countTokens", (const char*)compressed_result.data, compressed_result.size, write_to_memory_struct_callback, &chunk);
+
     int token_count = -1;
-    long http_code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-    if (res == CURLE_OK && http_code == 200) {
+    if (http_code == 200) {
         cJSON* json_resp = cJSON_Parse(chunk.buffer);
         if (json_resp) {
             cJSON* tokens = cJSON_GetObjectItem(json_resp, "totalTokens");
@@ -1410,13 +1393,13 @@ int get_token_count(AppState* state) {
             cJSON_Delete(json_resp);
         }
     } else {
-        fprintf(stderr, "Token count API call failed (HTTP code: %ld, Curl code: %d)\n", http_code, res);
+        fprintf(stderr, "Token count API call failed (HTTP code: %ld)\n", http_code);
+        if(http_code < 0) fprintf(stderr, "Curl error: %s\n", curl_easy_strerror(-http_code));
         parse_and_print_error_json(chunk.buffer);
     }
-    curl_easy_cleanup(curl);
+
     free(compressed_result.data);
     free(chunk.buffer);
-    curl_slist_free_all(headers);
     return token_count;
 }
 
@@ -1610,97 +1593,136 @@ bool is_path_safe(const char* path) {
     return true;
 }
 
-
+/**
+ * @brief Handles reading data from a stream (file or stdin), encoding it, and adding it as a pending attachment.
+ * @param stream The stream to read from. If NULL, 'filepath' will be opened.
+ * @param filepath A descriptive name for the stream source (e.g., filename or "stdin").
+ * @param mime_type The MIME type of the data.
+ * @param state The application state to add the attachment to.
+ */
 void handle_attachment_from_stream(FILE* stream, const char* filepath, const char* mime_type, AppState* state) {
-    if (state->num_attached_parts >= ATTACHMENT_LIMIT) { fprintf(stderr,"Attachment limit reached.\n"); return; }
-    bool is_file = (stream == NULL);
-    if (is_file) {
-        if (!is_path_safe(filepath)) { fprintf(stderr, "Error: Unsafe or absolute file path specified: %s\n", filepath); return; }
-        stream = fopen(filepath, "rb");
-        if (!stream) { perror("Error opening file"); return; }
+    // --- 1. Pre-condition checks ---
+    if (state->num_attached_parts >= ATTACHMENT_LIMIT) {
+        fprintf(stderr, "Error: Attachment limit of %d reached.\n", ATTACHMENT_LIMIT);
+        return;
     }
-    fseek(stream, 0, SEEK_END);
-    long size = ftell(stream);
-    fseek(stream, 0, SEEK_SET);
-    if (size <= 0 && is_file) { fclose(stream); fprintf(stderr,"Warning: File '%s' is empty.\n", filepath); return; }
 
-    unsigned char* buffer = NULL;
-    size_t total_read = 0;
+    bool is_from_file = (stream == NULL);
 
-    if (is_file && size > 0) { // Known size from a regular file
-        buffer = malloc(size);
-        if (!buffer) { fclose(stream); fprintf(stderr, "Error: malloc failed for file buffer.\n"); return; }
-        total_read = fread(buffer, 1, size, stream);
-    } else { // Unknown size from stdin or an empty file
-        size_t capacity = 1*1024*1024;
-        buffer = malloc(capacity);
-        if (!buffer) {
-            if (is_file) fclose(stream);
-            fprintf(stderr, "Error: malloc failed for stdin buffer.\n");
+    // --- 2. File-specific logic: path safety, opening, and size check ---
+    if (is_from_file) {
+        if (!is_path_safe(filepath)) {
+            fprintf(stderr, "Error: Unsafe or absolute file path specified: %s\n", filepath);
             return;
         }
-
-        // Read until EOF is reached. This loop is robust for interactive streams.
-        while (1) {
-            // Ensure we have space for at least one more read chunk.
-            if (capacity - total_read < 1024) { // Use a smaller, fixed realloc threshold
-                 capacity *= 2;
-                 unsigned char* new_buffer = realloc(buffer, capacity);
-                 if (!new_buffer) {
-                     free(buffer);
-                     if (is_file) fclose(stream);
-                     fprintf(stderr, "Error: realloc failed for stdin buffer.\n");
-                     return;
-                 }
-                 buffer = new_buffer;
-            }
-
-            // Read a chunk of data.
-            size_t bytes_read = fread(buffer + total_read, 1, 1024, stream);
-            total_read += bytes_read;
-
-            // Check stream status to decide if we should break the loop.
-            if (feof(stream)) {
-                break; // EOF is the primary exit condition.
-            }
-            if (bytes_read == 0 && ferror(stream)) {
-                perror("Error reading from stream");
-                break; // Exit on error.
-            }
+        stream = fopen(filepath, "rb");
+        if (!stream) {
+            perror("Error opening file"); // perror provides a system error message (e.g., "No such file or directory")
+            return;
+        }
+        // Check for an empty file and handle it gracefully before allocating memory.
+        fseek(stream, 0, SEEK_END);
+        long size = ftell(stream);
+        fseek(stream, 0, SEEK_SET);
+        if (size <= 0) {
+            fprintf(stderr, "Warning: File '%s' is empty. Attachment skipped.\n", filepath);
+            fclose(stream);
+            return;
         }
     }
-    if (is_file) fclose(stream);
 
+    // --- 3. Universal stream reading logic ---
+    unsigned char* buffer = NULL;
+    size_t total_read = 0;
+    size_t capacity = 32 * 1024; // Start with a reasonable 32KB buffer.
+
+    buffer = malloc(capacity);
+    if (!buffer) {
+        fprintf(stderr, "Error: Initial malloc failed for attachment buffer.\n");
+        if (is_from_file) fclose(stream);
+        return;
+    }
+
+    size_t bytes_read;
+    // This is the idiomatic way to read from a stream until it ends.
+    // The loop continues as long as fread() returns a positive number of bytes.
+    while ((bytes_read = fread(buffer + total_read, 1, 1024, stream)) > 0) {
+        total_read += bytes_read;
+
+        // Check if we need to resize *before* the next read attempt.
+        // We ensure there's always at least 1024 bytes of space available.
+        if (capacity - total_read < 1024) {
+            size_t new_capacity = capacity * 2;
+            // Handle potential integer overflow for extremely large attachments.
+            if (new_capacity <= capacity) {
+                fprintf(stderr, "Error: Buffer capacity overflow for extremely large attachment.\n");
+                free(buffer);
+                if (is_from_file) fclose(stream);
+                return;
+            }
+            capacity = new_capacity;
+
+            unsigned char* new_buffer = realloc(buffer, capacity);
+            if (!new_buffer) {
+                fprintf(stderr, "Error: Buffer reallocation failed for attachment.\n");
+                free(buffer);
+                if (is_from_file) fclose(stream);
+                return;
+            }
+            buffer = new_buffer;
+        }
+    }
+
+    // After the loop, check if it terminated due to an error rather than a clean EOF.
+    if (ferror(stream)) {
+        perror("Error reading from attachment stream");
+        free(buffer);
+        if (is_from_file) fclose(stream);
+        return;
+    }
+
+    if (is_from_file) {
+        fclose(stream); // We are done with the file handle.
+    }
+
+    // If no data was read at all (e.g., from an empty pipe), don't create an attachment.
+    if (total_read == 0) {
+        fprintf(stderr, "Warning: No data was read from the attachment source '%s'. Skipped.\n", filepath);
+        free(buffer);
+        return;
+    }
+
+    // --- 4. Add the read data as a new attachment part ---
     Part* part = &state->attached_parts[state->num_attached_parts];
     part->type = PART_TYPE_FILE;
     part->text = NULL;
     part->filename = strdup(filepath);
-
     part->mime_type = strdup(mime_type);
-    if (!part->mime_type) {
-        fprintf(stderr, "Error: Failed to allocate memory for mime type.\n");
+
+    // Ensure metadata was allocated successfully before proceeding.
+    if (!part->filename || !part->mime_type) {
+        fprintf(stderr, "Error: Failed to allocate memory for attachment metadata.\n");
         free(buffer);
-        return;
-    }
-    part->base64_data = base64_encode(buffer, total_read);
-    if (!part->base64_data) {
-        fprintf(stderr, "Error: Failed to allocate memory for base64 data.\n");
-        free(part->mime_type); // Free the successfully allocated mime_type
-        free(buffer);
+        if (part->filename) free(part->filename);
+        if (part->mime_type) free(part->mime_type);
         return;
     }
 
-    if (!part->mime_type || !part->base64_data) {
-        fprintf(stderr, "Error: Failed to allocate memory for attachment part.\n");
-        if (part->mime_type) free(part->mime_type);
-        if (part->base64_data) free(part->base64_data);
-        free(buffer);
+    part->base64_data = base64_encode(buffer, total_read);
+    free(buffer); // Free the raw data buffer as soon as it has been encoded.
+
+    if (!part->base64_data) {
+        fprintf(stderr, "Error: Failed to base64 encode attachment data.\n");
+        // Clean up the metadata allocations from this failed attempt.
+        free(part->filename);
+        free(part->mime_type);
         return;
     }
-    fprintf(stderr,"Attached %s (MIME: %s, Size: %zu bytes)\n", filepath, part->mime_type, total_read);
+
+    fprintf(stderr, "Attached %s (MIME: %s, Size: %zu bytes)\n", filepath, part->mime_type, total_read);
     (state->num_attached_parts)++;
-    free(buffer);
 }
+
 const char* get_mime_type(const char* filename) {
     const char *dot = strrchr(filename, '.');
     if (!dot || dot == filename) return "text/plain";
@@ -1745,6 +1767,55 @@ char* base64_encode(const unsigned char* data, size_t input_length) {
     return encoded_data;
 }
 
+/**
+ * @brief Performs the core cURL request to a specified Gemini API endpoint.
+ * @param state The current application state.
+ * @param endpoint The API endpoint to call (e.g., "countTokens").
+ * @param compressed_payload The Gzipped request body.
+ * @param payload_size The size of the compressed payload.
+ * @param callback The write callback function to handle the response data.
+ * @param callback_data A pointer to the data structure for the callback (e.g., MemoryStruct).
+ * @return The HTTP status code of the response, or a negative CURLcode on transport failure.
+ */
+long perform_api_curl_request(AppState* state, const char* endpoint, const char* compressed_payload, size_t payload_size, size_t (*callback)(void*, size_t, size_t, void*), void* callback_data) {
+    long http_code = 0;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        return -CURLE_FAILED_INIT;
+    }
+
+    char full_api_url[256], auth_header[256], origin_header[256];
+    snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, endpoint);
+    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
+    snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
+
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "Content-Encoding: gzip");
+    headers = curl_slist_append(headers, auth_header);
+    if (strcmp(state->origin, "default") != 0) {
+        headers = curl_slist_append(headers, origin_header);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, compressed_payload);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)payload_size);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, callback_data);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    if (res != CURLE_OK && http_code == 0) {
+        http_code = -res; // Return negative CURLcode if the request itself failed
+    }
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    return http_code;
+}
+
 int main(int argc, char* argv[]) {
     curl_global_init(CURL_GLOBAL_ALL);
 
@@ -1762,11 +1833,11 @@ int main(int argc, char* argv[]) {
     if (is_stdin_a_terminal && is_stdout_a_terminal) {
         // Both input and output are the user's keyboard/screen.
         // Start the full interactive session.
-        generate_interactive_session(argc, argv, true);
+        generate_session(argc, argv, true, is_stdin_a_terminal);
     } else {
         // Either input is a pipe/file or output is a pipe/file.
         // Run in non-interactive/scripting mode.
-        generate_interactive_session(argc, argv, false);
+        generate_session(argc, argv, false, false);
     }
 
     curl_global_cleanup();
