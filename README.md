@@ -1,4 +1,4 @@
-# Gemini-CLI: A Portable Command-Line Client
+# Gemini-CLI: A Portable Command-Line Client for the Google Gemini API
 
 **Gemini-CLI** is a powerful, portable, and feature-rich command-line client for the Google Gemini API. It provides a fluid, shell-like interface for conversing with large language models, designed for developers, writers, and power-users who live in the terminal.
 
@@ -7,11 +7,11 @@ It is written in C for maximum performance and portability, with no dependencies
 ## Features
 
 *   **Dual-Mode Operation:** Functions as both a fully featured **interactive chat client** and a non-interactive, **scriptable command-line tool**. The mode is automatically detected based on whether input is being piped to the program.
-*   **Scripting & Piping:** Pipe content directly to the program (`cat file | prompt "summarize this"`) or provide prompts as arguments for seamless integration into shell scripts and automation.
+*   **Scripting & Piping:** Pipe content directly to the program (`cat file | gemini-cli "summarize this"`) or provide prompts as arguments for seamless integration into shell scripts and automation.
 *   **Streaming Responses:** In interactive mode, see the model's response generated in real-time, just like in web UIs.
 *   **File Attachments:** Attach images, source code, PDFs, and other files to your prompts. Supports local files (`/attach`) and pasting directly from stdin (`/paste`).
 *   **Session Management:** Save, load, list, and delete entire conversation sessions, allowing you to easily switch between different projects and contexts. The current session name is always visible in the prompt.
-*   **Conversation History:** Your conversation is maintained in memory. You can export the entire chat to a JSON file (`/save`) and import it later (`/load`).
+*   **Conversation History:** Your conversation is maintained in memory. You can export the entire chat to a JSON file (`/save`), a Markdown file (`/export`), and import it later (`/load`).
 *   **History Management:** List and selectively remove individual file attachments from the current conversation history.
 *   **System Prompts:** Guide the model's behavior for the entire session with a persistent system prompt (`/system`).
 *   **Secure & Configurable:**
@@ -19,9 +19,11 @@ It is written in C for maximum performance and portability, with no dependencies
     *   Supports configuration via environment variables (`GEMINI_API_KEY`, `GEMINI_API_KEY_ORIGIN`).
     *   **Handles Origin-Restricted Keys:** Set the `Origin` header via environment variable or config file, a crucial feature for using API keys secured by HTTP referrers.
     *   Can be configured via a JSON file for model, temperature, seed, API key, and origin persistence.
-*   **Cross-Platform:** Designed to compile and run seamlessly on both POSIX systems (Linux, macOS) and Windows. The included Makefile handles platform differences automatically.
+*   **Cross-Platform:** Designed to compile and run seamlessly on both POSIX systems (Linux, macOS) and Windows.
 *   **Efficient:** Uses Gzip compression for all API requests to reduce network latency and bandwidth.
 *   **Informative:** Get session statistics, including the total token count of your conversation context, with the `/stats` command.
+*   **Model Exploration:** List all available models from the API with the `/models` command.
+*   **Advanced Generation Control:** Fine-tune the model's output with temperature, `topK`, and `topP` parameters, both at startup and during an interactive session.
 
 ## Getting Started
 
@@ -45,7 +47,7 @@ sudo apt-get update
 sudo apt-get install build-essential libcurl4-openssl-dev libreadline-dev zlib1g-dev
 ```
 
-**On Opensuse/Thumbleweed:**
+**On openSUSE/Tumbleweed:**
 ```bash
 sudo zypper refresh
 sudo zypper install gcc make libcurl-devel readline-devel zlib-devel
@@ -74,7 +76,7 @@ The project includes a `Makefile` that automatically detects your operating syst
 ```bash
 make
 ```
-This will create an executable named `prompt` (or `prompt.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
+This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
 
 ### 4. Configure Your API Key
 You need to provide your Google Gemini API key. You can get one from [Google AI Studio](https://aistudio.google.com/app/apikey). The client will load settings in the following order of priority: **1. Environment Variable**, **2. Configuration File**, **3. Interactive Prompt**.
@@ -104,7 +106,9 @@ You need to provide your Google Gemini API key. You can get one from [Google AI 
       "model": "gemini-1.5-flash",
       "temperature": 0.75,
       "seed": 42,
-      "system_prompt": "You are a helpful and concise assistant."
+      "system_prompt": "You are a helpful and concise assistant.",
+      "top_k": 40,
+      "top_p": 0.95
     }
     ```
 
@@ -114,45 +118,45 @@ You need to provide your Google Gemini API key. You can get one from [Google AI 
 ## Usage
 
 ### Command-Line Arguments
-You can control the model, temperature, and seed at startup using these flags. Any other arguments are treated as a prompt or file attachments.
+You can control the model and generation parameters at startup using these flags. Any other arguments are treated as an initial prompt or file attachments.
 
 | Flag | Alias | Description | Example |
 |---|---|---|---|
-| `-m`, `--model` | | Specify the model name to use. | `./prompt -m gemini-1.5-pro` |
-| `-t`, `--temp` | | Set the generation temperature (e.g., 0.0 to 1.0). | `./prompt -t 0.25` |
-| `-s`, `--seed` | | Set the generation seed for reproducible outputs. | `./prompt -s 1234` |
+| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro` |
+| `-t`, `--temp` | | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
+| `-s`, `--seed` | | Set the generation seed for reproducible outputs. | `./gemini-cli -s 1234` |
+| `-o`, `--max-tokens` | | Set the maximum number of tokens in the response. | `./gemini-cli -o 2048` |
+| `-b`, `--budget` | | Set the model's max 'thinking' token budget. | `./gemini-cli -b 8192` |
+| | `--topk` | Set the Top-K sampling parameter. | `./gemini-cli --topk 40` |
+| | `--topp` | Set the Top-P sampling parameter. | `./gemini-cli --topp 0.95` |
+| `-ng`, `--no-grounding` | | Disable Google Search grounding. | `./gemini-cli -ng` |
+| `-nu`, `--no-url-context`| | Disable URL context processing. | `./gemini-cli -nu` |
+| `-h`, `--help` | | Show the help message and exit. | `./gemini-cli --help` |
 
 ### Interactive Mode
 To start a conversation, simply run the executable. This is the default mode when not piping data. You can combine flags with initial files to attach. The program will load these and then drop you into an interactive session:
 ```bash
 # Start a simple session
-./prompt
+./gemini-cli
 
-# Start with a specific model and initial attachments
-./prompt -m gemini-1.5-pro-latest my_image.png my_code.py
+# Start with a specific model and an initial prompt
+./gemini-cli -m gemini-1.5-pro-latest "Tell me about the C programming language."
+
+# Start with initial attachments
+./gemini-cli my_image.png my_code.py "Describe the code and the image."
 ```
 
 ### Non-Interactive / Scripting Mode
-Gemini-CLI automatically enters non-interactive mode if you pipe data to it or provide a prompt via arguments without starting an interactive session.
+Gemini-CLI automatically enters non-interactive mode if you pipe data to it.
 
 **Piping Content:**
 The piped content is treated as a text attachment, and any arguments are used as the prompt.
 ```bash
 # Summarize a source file
-cat my_complex_function.c | ./prompt "Explain what this C code does in simple terms"
+cat my_complex_function.c | ./gemini-cli "Explain what this C code does in simple terms"
 
 # Generate a git commit message from the staged changes
-git diff --staged | ./prompt "Write a concise, imperative git commit message for these changes"
-```
-
-**Providing a Prompt as an Argument:**
-If not piping data, all non-flag arguments are concatenated with spaces to form a single prompt.
-```bash
-# Quick question
-./prompt "What is the capital of Nepal?"
-
-# Use with command-line flags and a multi-part prompt
-./prompt -m gemini-1.5-flash "Write a short poem" "about the C programming language"
+git diff --staged | ./gemini-cli "Write a concise, imperative git commit message for these changes"
 ```
 
 ### Interactive Commands
@@ -166,14 +170,22 @@ Type `/help` at the prompt to see a list of available commands.
 | `/exit`, `/quit` | Exit the program. |
 | `/clear` | Clear the current conversation history and any pending attachments. |
 | `/stats` | Show session statistics (model, temperature, token count, etc.). |
-| `/system <prompt>` | Set a system prompt that influences the model's behavior. |
+| `/models` | List all available models from the API. |
+| **Conversation Control** | |
+| `/system [prompt]` | Set or show the system prompt that influences the model's behavior. |
 | `/clear_system` | Remove the system prompt. |
+| `/temp [value]` | Set or show the temperature for the response. |
+| `/maxtokens [value]`| Set or show the maximum output tokens for the response. |
+| `/budget [value]` | Set or show the max thinking budget for the model. |
+| `/topk [value]` | Set or show the topK sampling parameter. |
+| `/topp [value]` | Set or show the topP sampling parameter. |
 | **Attachments & I/O** | |
 | `/attach <file> [prompt]` | Attach a file. You can optionally add a text prompt on the same line. |
 | `/paste` | Paste text from stdin as a `text/plain` attachment (Ctrl+D/Ctrl+Z to end). |
 | `/savelast <file.txt>`| Save only the last model response to a text file. |
 | `/save <file.json>` | (Export) Save the current conversation history to a JSON file. |
 | `/load <file.json>` | (Import) Load a conversation history from a JSON file. |
+| `/export <file.md>` | Export the conversation to a human-readable Markdown file. |
 | **History Management** | |
 | `/history attachments list` | List all file attachments currently in the conversation history, with their IDs. |
 | `/history attachments remove <id>` | Remove an attachment from history using its ID (e.g., `2:1`). |
