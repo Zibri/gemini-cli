@@ -79,6 +79,8 @@ typedef struct AppState {
     Part attached_parts[ATTACHMENT_LIMIT];
     int num_attached_parts;
     int seed;
+    int topK;
+    float topP;
     char current_session_name[128];
 } AppState;
 
@@ -116,6 +118,8 @@ static void json_read_strdup(const cJSON* obj, const char* key, char** target);
 bool send_api_request(AppState* state, char** full_response_out);
 bool build_session_path(const char* session_name, char* path_buffer, size_t buffer_size);
 long perform_api_curl_request(AppState* state, const char* endpoint, const char* compressed_payload, size_t payload_size, size_t (*callback)(void*, size_t, size_t, void*), void* callback_data);
+void export_history_to_markdown(AppState* state, const char* filepath);
+void list_available_models(AppState* state);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -379,11 +383,15 @@ if (interactive) {
                        "  /budget [tokens]           - Set/show the max thinking budget for the model.\n"
                        "  /maxtokens [tokens]        - Set/show the max output tokens for the response.\n"
                        "  /temp [temperature]        - Set/show the temperature for the response.\n"
+                       "  /topp [float]              - Set/show the topK for the response.\n"
+                       "  /topk [integer]            - Set/show the topP for the response.\n"
                        "  /attach <file> [prompt]    - Attach a file. Optionally add prompt on same line.\n"
                        "  /paste                     - Paste text from stdin as an attachment.\n"
                        "  /savelast <file.txt>       - Save the last model response to a text file.\n"
                        "  /save <file.json>          - (Export) Save history to a specific file path.\n"
                        "  /load <file.json>          - (Import) Load history from a specific file path.\n"
+                       "  /export <file.md>          - Export the conversation to a Markdown file.\n"
+                       "  /models                    - List all available models from the API.\n"
                        "\nHistory Management:\n"
                        "  /history attachments list    - List all file attachments in the conversation history.\n"
                        "  /history attachments remove <id> - Remove an attachment from history (e.g., 2:1).\n"
@@ -397,6 +405,12 @@ if (interactive) {
                        "  /session save <name>       - Save the current chat to a named session.\n"
                        "  /session load <name>       - Load a named session.\n"
                        "  /session delete <name>     - Delete a named session.\n");
+            } else if (strcmp(command_buffer, "/export") == 0) {
+                if (*arg_start == '\0') {
+                    fprintf(stderr, "Usage: /export <filename.md>\n");
+                } else {
+                    export_history_to_markdown(&state, arg_start);
+                }
             } else if (strcmp(command_buffer, "/clear") == 0) {
                 clear_session_state(&state);
             } else if (strcmp(command_buffer, "/session") == 0) {
@@ -446,7 +460,8 @@ if (interactive) {
                 } else {
                     fprintf(stderr,"Unknown session command: '%s'. Use '/help' to see options.\n", sub_command);
                 }
-
+            } else if (strcmp(command_buffer, "/models") == 0) {
+                list_available_models(&state);
             } else if (strcmp(command_buffer, "/stats") == 0) {
                 fprintf(stderr,"--- Session Stats ---\n");
                 fprintf(stderr,"Model: %s\n", state.model_name);
@@ -531,6 +546,40 @@ if (interactive) {
                     } else {
                         state.max_output_tokens = (int)tokens;
                         fprintf(stderr, "Max output tokens set to %d.\n", state.max_output_tokens);
+                    }
+                }
+            } else if (strcmp(command_buffer, "/topk") == 0) {
+                if (*arg_start == '\0') {
+                    if (state.topK > 0) {
+                        fprintf(stderr, "topK is set to: %d\n", state.topK);
+                    } else {
+                        fprintf(stderr, "topK is not set.\n");
+                    }
+                } else {
+                    char* endptr;
+                    long val = strtol(arg_start, &endptr, 10);
+                    if (endptr == arg_start || *endptr != '\0' || val <= 0) {
+                        fprintf(stderr, "Error: Invalid topK value. Must be a positive integer.\n");
+                    } else {
+                        state.topK = (int)val;
+                        fprintf(stderr, "topK set to %d.\n", state.topK);
+                    }
+                }
+            } else if (strcmp(command_buffer, "/topp") == 0) {
+                if (*arg_start == '\0') {
+                     if (state.topP > 0) {
+                        fprintf(stderr, "topP is set to: %.2f\n", state.topP);
+                    } else {
+                        fprintf(stderr, "topP is not set.\n");
+                    }
+                } else {
+                    char* endptr;
+                    float val = strtof(arg_start, &endptr);
+                    if (endptr == arg_start || *endptr != '\0' || val <= 0.0f || val > 1.0f) {
+                        fprintf(stderr, "Error: Invalid topP value. Must be between 0.0 and 1.0.\n");
+                    } else {
+                        state.topP = val;
+                        fprintf(stderr, "topP set to %.2f.\n", state.topP);
                     }
                 }
             } else if (strcmp(command_buffer, "/temp") == 0) {
@@ -798,6 +847,198 @@ if (interactive) {
 // --- Helper and Utility Functions ---
 
 /**
+ * @brief Performs a generic cURL GET request to a specified URL.
+ * @param url The full URL to request.
+ * @param state The current application state, used for API key and origin.
+ * @param callback The write callback function to handle the response data.
+ * @param callback_data A pointer to the data structure for the callback (e.g., MemoryStruct).
+ * @return The HTTP status code of the response, or a negative CURLcode on transport failure.
+ */
+long perform_api_get_request(const char* url, AppState* state, size_t (*callback)(void*, size_t, size_t, void*), void* callback_data) {
+    long http_code = 0;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        return -CURLE_FAILED_INIT;
+    }
+
+    char auth_header[256];
+    char origin_header[256];
+    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
+    snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
+
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, auth_header);
+
+    if (strcmp(state->origin, "default") != 0) {
+        headers = curl_slist_append(headers, origin_header);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, callback_data);
+
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    if (res != CURLE_OK && http_code == 0) {
+        http_code = -res;
+    }
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(headers);
+    return http_code;
+}
+
+/**
+ * @brief Fetches and lists all available models from the Gemini API, handling pagination.
+ * @param state The current application state, used to retrieve the API key.
+ */
+void list_available_models(AppState* state) {
+    char next_page_token[256] = {0};
+    bool first_page = true;
+    int model_count = 0;
+
+    MemoryStruct chunk = { .buffer = malloc(1), .size = 0 };
+    if (!chunk.buffer) {
+        fprintf(stderr, "Error: Failed to allocate memory for API response.\n");
+        return;
+    }
+    chunk.buffer[0] = '\0';
+
+    fprintf(stderr, "Fetching available models...\n");
+
+    do {
+        char full_url[1024];
+        if (first_page) {
+            snprintf(full_url, sizeof(full_url), "https://generativelanguage.googleapis.com/v1beta/models?pageSize=50");
+            first_page = false;
+        } else {
+            snprintf(full_url, sizeof(full_url), "https://generativelanguage.googleapis.com/v1beta/models?pageSize=50&pageToken=%s", next_page_token);
+        }
+
+        // Reset buffer for the new request
+        chunk.size = 0;
+        chunk.buffer[0] = '\0';
+
+        long http_code = perform_api_get_request(full_url, state, write_to_memory_struct_callback, &chunk);
+
+        if (http_code != 200) {
+            fprintf(stderr, "\nAPI call to list models failed (HTTP code: %ld)\n", http_code);
+            if(http_code < 0) fprintf(stderr, "Curl error: %s\n", curl_easy_strerror(-http_code));
+            parse_and_print_error_json(chunk.buffer);
+            break; // Exit loop on failure
+        }
+
+        cJSON* root = cJSON_Parse(chunk.buffer);
+        if (!root) {
+            fprintf(stderr, "Error: Failed to parse JSON response for models list.\n");
+            break;
+        }
+
+        cJSON* models_array = cJSON_GetObjectItem(root, "models");
+        if (cJSON_IsArray(models_array)) {
+            cJSON* model_item;
+            cJSON_ArrayForEach(model_item, models_array) {
+                cJSON* name = cJSON_GetObjectItem(model_item, "name");
+                cJSON* display_name = cJSON_GetObjectItem(model_item, "displayName");
+                if (cJSON_IsString(name)) {
+                    const char* full_model_name = name->valuestring;
+                    const char* name_to_print = full_model_name;
+                    const char* prefix = "models/";
+
+                    // Check if the string starts with "models/" and is long enough
+                    if (strncmp(full_model_name, prefix, strlen(prefix)) == 0) {
+                        // If it does, advance the pointer to start after the prefix
+                        name_to_print = full_model_name + strlen(prefix);
+                    }
+
+                    // Use the adjusted pointer for printing
+                    fprintf(stdout, "- %s (%s)\n", name_to_print, cJSON_IsString(display_name) ? display_name->valuestring : "N/A");
+                    model_count++;
+                }
+            }
+        }
+
+        const cJSON* token_item = cJSON_GetObjectItem(root, "nextPageToken");
+        if (cJSON_IsString(token_item) && (token_item->valuestring != NULL)) {
+            strncpy(next_page_token, token_item->valuestring, sizeof(next_page_token) - 1);
+        } else {
+            next_page_token[0] = '\0'; // No more pages
+        }
+
+        cJSON_Delete(root);
+
+    } while (next_page_token[0] != '\0');
+
+    if (model_count == 0) {
+        fprintf(stderr, "No models were found or an error occurred.\n");
+    } else {
+        fprintf(stderr, "\nFound %d models.\n", model_count);
+    }
+
+    free(chunk.buffer);
+}
+
+/**
+ * @brief Exports the current conversation history to a human-readable Markdown file.
+ * @param state The current application state.
+ * @param filepath The path to the Markdown file to be created.
+ */
+void export_history_to_markdown(AppState* state, const char* filepath) {
+    if (!is_path_safe(filepath)) {
+        fprintf(stderr, "Error: Unsafe or absolute file path specified: %s\n", filepath);
+        return;
+    }
+
+    FILE* file = fopen(filepath, "w");
+    if (!file) {
+        perror("Failed to open file for export");
+        return;
+    }
+
+    fprintf(stderr, "Exporting conversation to %s...\n", filepath);
+
+    // Optional: Write the system prompt at the top
+    if (state->system_prompt) {
+        fprintf(file, "## System Prompt\n\n```\n%s\n```\n\n---\n\n", state->system_prompt);
+    }
+
+    for (int i = 0; i < state->history.num_contents; i++) {
+        Content* content = &state->history.contents[i];
+
+        // Write role, capitalizing the first letter
+        fprintf(file, "### %c%s\n\n", toupper((unsigned char)content->role[0]), content->role + 1);
+
+        bool has_text = false;
+        for (int j = 0; j < content->num_parts; j++) {
+            Part* part = &content->parts[j];
+            if (part->type == PART_TYPE_TEXT && part->text) {
+                fprintf(file, "%s\n", part->text);
+                has_text = true;
+            } else if (part->type == PART_TYPE_FILE) {
+                const char* filename = part->filename ? part->filename : "Pasted Data";
+                const char* mime_type = part->mime_type ? part->mime_type : "unknown";
+                fprintf(file, "\n`[Attached File: %s (%s)]`\n", filename, mime_type);
+            }
+        }
+
+        // Add a newline for spacing if there was text
+        if (has_text) {
+            fprintf(file, "\n");
+        }
+
+        // Add a horizontal rule after each turn, except the last one
+        if (i < state->history.num_contents - 1) {
+            fprintf(file, "---\n\n");
+        }
+    }
+
+    fclose(file);
+    fprintf(stderr, "Successfully exported history to %s\n", filepath);
+}
+
+/**
  * @brief Gets the base path for the application's configuration/data directory, creating it if it doesn't exist.
  * @param buffer A buffer to store the resulting path.
  * @param buffer_size The size of the buffer.
@@ -999,6 +1240,12 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
         } else if ((STRCASECMP(argv[i], "-o") == 0 || STRCASECMP(argv[i], "--max-tokens") == 0) && (i + 1 < argc)) {
             state->max_output_tokens = atoi(argv[i + 1]);
             i++;
+        } else if ((STRCASECMP(argv[i], "--topk") == 0) && (i + 1 < argc)) {
+            state->topK = atoi(argv[i + 1]);
+            i++;
+        } else if ((STRCASECMP(argv[i], "--topp") == 0) && (i + 1 < argc)) {
+            state->topP = atof(argv[i + 1]);
+            i++;
         } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
             state->thinking_budget = atoi(argv[i + 1]);
             i++;
@@ -1067,7 +1314,8 @@ void initialize_default_state(AppState* state) {
     state->google_grounding = true;
     state->url_context = true;
     state->thinking_budget = -1;
-
+    state->topK = -1; // -1 means not set
+    state->topP = -1.0f; // -1.0f means not set
 /*
     // Conditionally set the thinking_budget based on the model name
     if (strstr(state->model_name, "flash") != NULL) {
@@ -1240,7 +1488,9 @@ void load_configuration(AppState* state) {
     json_read_int(root, "thinking_budget", &state->thinking_budget);
     json_read_bool(root, "google_grounding", &state->google_grounding);
     json_read_bool(root, "url_context", &state->url_context);
-
+    json_read_int(root, "top_k", &state->topK);
+    json_read_float(root, "top_p", &state->topP);
+    
     cJSON_Delete(root);
 }
 
@@ -1320,6 +1570,12 @@ cJSON* build_request_json(AppState* state) {
     cJSON_AddNumberToObject(gen_config, "temperature", state->temperature);
     cJSON_AddNumberToObject(gen_config, "maxOutputTokens", state->max_output_tokens);
     cJSON_AddNumberToObject(gen_config, "seed", state->seed);
+    if (state->topK > 0) {
+        cJSON_AddNumberToObject(gen_config, "topK", state->topK);
+    }
+    if (state->topP > 0.0f) {
+        cJSON_AddNumberToObject(gen_config, "topP", state->topP);
+    }
     cJSON_AddItemToObject(root, "generationConfig", gen_config);
 
     cJSON* thinking_config = cJSON_CreateObject();
@@ -1468,7 +1724,6 @@ void load_history_from_file(AppState* state, const char* filepath) {
         free(loaded_parts);
     }
 
-    // --- FIX START ---
     // Manually traverse the JSON to find the system prompt, as cJSON_GetObjectItemByPath might not exist.
     cJSON* sys_instruction = cJSON_GetObjectItem(root, "systemInstruction");
     if (sys_instruction && cJSON_IsObject(sys_instruction)) {
@@ -1484,7 +1739,6 @@ void load_history_from_file(AppState* state, const char* filepath) {
             }
         }
     }
-    // --- FIX END ---
 
     cJSON_Delete(root);
     fprintf(stderr,"Conversation history loaded from %s\n", filepath);
