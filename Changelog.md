@@ -1,4 +1,6 @@
-### **Initial Version (Pre-1.0.0)**
+### **Changelog**
+
+#### **Initial Version (Pre-1.0.0)**
 
 This was the foundational version of the `gemini-cli` tool, establishing the core interactive chat functionality.
 
@@ -9,7 +11,7 @@ This was the foundational version of the `gemini-cli` tool, establishing the cor
     *   Ability to attach files as context for the model.
     *   Loading of API key and other settings from a configuration file or environment variables.
 
-### **Version 1.0.0**
+#### **Version 1.0.0**
 
 This version introduced a significant refactoring to improve command-line argument handling and make the initial experience more intuitive.
 
@@ -19,7 +21,7 @@ This version introduced a significant refactoring to improve command-line argume
 *   **Improvements:**
     *   **Help Message:** A `print_usage` function was added to display a helpful message with all available options when the user provides the `-h` or `--help` argument.
 
-### **Version 1.0.1**
+#### **Version 1.0.1**
 
 This version introduced foundational features for giving users more control over the API's behavior and improved the robustness of configuration handling.
 
@@ -30,7 +32,7 @@ This version introduced foundational features for giving users more control over
 *   **Improvements:**
     *   API requests now only include the `googleSearch` and `urlContext` tools if they are enabled in the application's state.
 
-### **Version 1.0.2**
+#### **Version 1.0.2**
 
 This release focused on improving the "thinking budget" feature and providing better feedback to the user upon startup.
 
@@ -39,7 +41,7 @@ This release focused on improving the "thinking budget" feature and providing be
     *   **Startup Information:** The client now clearly displays the status (ON/OFF) of Google Search grounding and URL context processing when an interactive session begins.
     *   **Removed Model-Specific Budget:** Removed the logic that automatically set a fixed thinking budget based on the model name, favoring the new "automatic" default.
 
-### **Version 1.0.3**
+#### **Version 1.0.3**
 
 This was a critical bugfix release that addressed a major issue in how the client handled responses from the API.
 
@@ -47,7 +49,7 @@ This was a critical bugfix release that addressed a major issue in how the clien
     *   **Multi-Part Response Handling:** Fixed a significant bug where only the first part of a multi-part API response was being displayed. The client now correctly processes and prints all parts, ensuring the complete output from the model is shown.
     *   **Cleaner Shell Output:** A final newline is now consistently added after a response is received in non-interactive mode, improving integration with shell scripts.
 
-### **Version 1.0.4**
+#### **Version 1.0.4**
 
 This version marked a major internal refactoring to streamline the codebase, reduce duplication, and simplify API communication logic.
 
@@ -55,7 +57,7 @@ This version marked a major internal refactoring to streamline the codebase, red
     *   **Centralized API Logic:** All API request logic was consolidated into a single `send_api_request` function. This function now handles JSON creation, compression, request execution, and error handling for both interactive (streaming) and non-interactive modes, significantly reducing code duplication.
     *   **Simplified Response Handling:** The main interactive and non-interactive functions were refactored to use the new centralized API function, simplifying their logic. Manual JSON response parsing in the non-interactive mode was removed in favor of the unified streaming callback.
 
-### **Version 1.0.5**
+#### **Version 1.0.5**
 
 This version delivered a host of user experience improvements for the interactive mode and further refactored the codebase for better maintainability.
 
@@ -69,7 +71,7 @@ This version delivered a host of user experience improvements for the interactiv
 *   **Refactoring:**
     *   Redundant argument-parsing code was removed from the main functions in favor of the `parse_common_options` function.
 
-### **Version 1.0.6**
+#### **Version 1.0.6**
 
 This version focused on improving the command-line experience by allowing users to provide an initial prompt directly as an argument and enhancing mode detection.
 
@@ -79,7 +81,7 @@ This version focused on improving the command-line experience by allowing users 
     *   **Smarter Mode Detection:** The client now checks if both `stdin` and `stdout` are connected to a terminal to decide whether to run in interactive mode. This prevents it from getting stuck waiting for input if either is redirected.
     *   **Cleaner Output:** The newline before the API response is now only printed in interactive mode, resulting in cleaner output for scripting.
 
-### **Version 1.0.7**
+#### **Version 1.0.7**
 
 This release marked a final major refactoring of the main application logic, unifying the interactive and non-interactive modes into a single, more maintainable function.
 
@@ -89,7 +91,7 @@ This release marked a final major refactoring of the main application logic, uni
 *   **Improvements:**
     *   **Consistent Behavior:** Both modes now share the exact same setup, argument parsing, and API request logic, ensuring more consistent behavior regardless of how the tool is invoked.
 
-### **Version 1.0.8**
+#### **Version 1.0.8**
 
 This version introduced significant robustness improvements to file handling and further refined the internal structure of the code.
 
@@ -99,9 +101,9 @@ This version introduced significant robustness improvements to file handling and
     *   **Centralized cURL Logic:** A new `perform_api_curl_request` function was created to abstract the core cURL execution, further reducing code duplication within the API-calling functions (`send_api_request`, `get_token_count`).
     *   **Path Management:** The logic for finding the application's configuration directory was centralized into a `get_base_app_path` function, simplifying path construction throughout the application.
 
-### **Version 1.0.9**
+#### **Version 1.0.9**
 
-This final version added new features for exploring the API's capabilities and exporting conversations, along with more granular control over generation parameters.
+This version added new features for exploring the API's capabilities and exporting conversations, along with more granular control over generation parameters.
 
 *   **Features:**
     *   **Model Listing:** A new `/models` command was added to fetch and display a list of all available models from the API.
@@ -110,3 +112,15 @@ This final version added new features for exploring the API's capabilities and e
 *   **Improvements:**
     *   The help message (`/help`) was updated to include all the new commands.
     *   Configuration loading was updated to support the new `top_k` and `top_p` settings.
+
+#### **Version 1.0.10**
+
+This is the latest version, which adds more interactive commands for managing configuration and settings, and improves the overall usability of the tool.
+
+*   **Features:**
+    *   **Interactive Configuration Management:** New commands `/config save` and `/config load` allow saving the current settings to the `config.json` file or reloading them during a session.
+    *   **Custom Configuration Path:** A `-c` or `--config` command-line flag allows users to specify a custom path for the configuration file.
+    *   **Interactive Grounding and URL Context Control:** New commands `/grounding [on|off]` and `/urlcontext [on|off]` were added to toggle Google Search grounding and URL context fetching during a session.
+*   **Improvements:**
+    *   **README Update:** The `README.md` file was updated to reflect all new features, commands, and the change of the executable name to `gemini-cli`.
+    *   **Enhanced Help Message:** The `/help` command output was expanded to include the new configuration and settings commands.
