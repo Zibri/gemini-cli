@@ -18,18 +18,20 @@ It is written in C for maximum performance and portability, with no dependencies
     *   Securely prompts for your API key without echoing it to the screen.
     *   Supports configuration via environment variables (`GEMINI_API_KEY`, `GEMINI_API_KEY_ORIGIN`).
     *   **Handles Origin-Restricted Keys:** Set the `Origin` header via environment variable or config file, a crucial feature for using API keys secured by HTTP referrers.
-    *   Can be configured via a JSON file for model, temperature, seed, API key, and origin persistence.
+    *   Can be configured via a JSON file (`config.json`) for persistence of model, temperature, seed, API key, and other settings.
+    *   Load configurations from a custom path using the `-c` flag.
+    *   Save the current session's settings to your configuration file with `/config save`.
 *   **Cross-Platform:** Designed to compile and run seamlessly on both POSIX systems (Linux, macOS) and Windows.
 *   **Efficient:** Uses Gzip compression for all API requests to reduce network latency and bandwidth.
-*   **Informative:** Get session statistics, including the total token count of your conversation context, with the `/stats` command.
+*   **Informative:** Get session statistics, including the total token count of your conversation context (including pending attachments), with the `/stats` command.
 *   **Model Exploration:** List all available models from the API with the `/models` command.
-*   **Advanced Generation Control:** Fine-tune the model's output with temperature, `topK`, and `topP` parameters, both at startup and during an interactive session.
+*   **Advanced Generation Control:** Fine-tune the model's output with temperature, `topK`, `topP`, and other parameters, both at startup and interactively during a session.
+*   **API Feature Toggling:** Interactively enable or disable Google Search grounding and URL context processing.
 
 ## Getting Started
 
 ### 1. Clone the Repository
-First, get the source code using git:
-```bash
+First, get the source code using git:```bash
 git clone https://github.com/Zibri/gemini-cli.git
 cd gemini-cli
 ```
@@ -61,8 +63,7 @@ sudo dnf install gcc make curl-devel readline-devel zlib-devel
 **On macOS (using Homebrew):**
 ```bash
 brew install curl readline zlib
-# You may need to provide linker flags if they aren't found automatically
-```
+# You may need to provide linker flags if they aren't found automatically```
 
 **On Windows:**
 The easiest way to build on Windows is by using a POSIX-like environment such as [MSYS2](https://www.msys2.org/). Once you have MSYS2 installed, open the **UCRT64** terminal and install the necessary packages:
@@ -93,7 +94,7 @@ You need to provide your Google Gemini API key. You can get one from [Google AI 
     ```
 
 2.  **Configuration File:**
-    The client will look for a `config.json` file. Create this file and add your key. This is also where you can set a default model, temperature, origin, or system prompt.
+    The client will look for a `config.json` file. You can create this file to set a default model, temperature, API key, or system prompt.
 
     *   **POSIX:** `~/.config/gemini-cli/config.json`
     *   **Windows:** `%APPDATA%\gemini-cli\config.json`
@@ -103,10 +104,13 @@ You need to provide your Google Gemini API key. You can get one from [Google AI 
     {
       "api_key": "your_api_key_here",
       "origin": "https://your-allowed-origin.com",
-      "model": "gemini-1.5-flash",
+      "model": "gemini-2.5-flash",
       "temperature": 0.75,
       "seed": 42,
       "system_prompt": "You are a helpful and concise assistant.",
+      "google_grounding": true,
+      "url_context": true,
+      "max_output_tokens": 8192,
       "top_k": 40,
       "top_p": 0.95
     }
@@ -122,7 +126,9 @@ You can control the model and generation parameters at startup using these flags
 
 | Flag | Alias | Description | Example |
 |---|---|---|---|
-| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro` |
+| `-h`, `--help` | | Show the help message and exit. | `./gemini-cli --help` |
+| `-c`, `--config` | | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
+| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-2.5-pro` |
 | `-t`, `--temp` | | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
 | `-s`, `--seed` | | Set the generation seed for reproducible outputs. | `./gemini-cli -s 1234` |
 | `-o`, `--max-tokens` | | Set the maximum number of tokens in the response. | `./gemini-cli -o 2048` |
@@ -131,20 +137,18 @@ You can control the model and generation parameters at startup using these flags
 | | `--topp` | Set the Top-P sampling parameter. | `./gemini-cli --topp 0.95` |
 | `-ng`, `--no-grounding` | | Disable Google Search grounding. | `./gemini-cli -ng` |
 | `-nu`, `--no-url-context`| | Disable URL context processing. | `./gemini-cli -nu` |
-| `-h`, `--help` | | Show the help message and exit. | `./gemini-cli --help` |
 
 ### Interactive Mode
-To start a conversation, simply run the executable. This is the default mode when not piping data. You can combine flags with initial files to attach. The program will load these and then drop you into an interactive session:
+To start a conversation, simply run the executable. This is the default mode when not piping data. You can combine flags with an initial prompt and files to attach. The program will process these and then drop you into an interactive session:
 ```bash
 # Start a simple session
 ./gemini-cli
 
 # Start with a specific model and an initial prompt
-./gemini-cli -m gemini-1.5-pro-latest "Tell me about the C programming language."
+./gemini-cli -m gemini-2.5-pro "Tell me about the C programming language."
 
-# Start with initial attachments
-./gemini-cli my_image.png my_code.py "Describe the code and the image."
-```
+# Start with initial attachments and a prompt
+./gemini-cli my_image.png my_code.py "Describe the code and the image."```
 
 ### Non-Interactive / Scripting Mode
 Gemini-CLI automatically enters non-interactive mode if you pipe data to it.
@@ -171,14 +175,17 @@ Type `/help` at the prompt to see a list of available commands.
 | `/clear` | Clear the current conversation history and any pending attachments. |
 | `/stats` | Show session statistics (model, temperature, token count, etc.). |
 | `/models` | List all available models from the API. |
+| `/config <save\|load>` | Save the current settings to the config file or load them from it. |
 | **Conversation Control** | |
 | `/system [prompt]` | Set or show the system prompt that influences the model's behavior. |
 | `/clear_system` | Remove the system prompt. |
-| `/temp [value]` | Set or show the temperature for the response. |
-| `/maxtokens [value]`| Set or show the maximum output tokens for the response. |
-| `/budget [value]` | Set or show the max thinking budget for the model. |
+| `/temp [value]` | Set or show the temperature. |
+| `/maxtokens [value]`| Set or show the maximum output tokens. |
+| `/budget [value]` | Set or show the max thinking budget (0 for automatic). |
 | `/topk [value]` | Set or show the topK sampling parameter. |
 | `/topp [value]` | Set or show the topP sampling parameter. |
+| `/grounding [on\|off]` | Set or show the status of Google Search grounding. |
+| `/urlcontext [on\|off]`| Set or show the status of URL context fetching. |
 | **Attachments & I/O** | |
 | `/attach <file> [prompt]` | Attach a file. You can optionally add a text prompt on the same line. |
 | `/paste` | Paste text from stdin as a `text/plain` attachment (Ctrl+D/Ctrl+Z to end). |
@@ -186,13 +193,13 @@ Type `/help` at the prompt to see a list of available commands.
 | `/save <file.json>` | (Export) Save the current conversation history to a JSON file. |
 | `/load <file.json>` | (Import) Load a conversation history from a JSON file. |
 | `/export <file.md>` | Export the conversation to a human-readable Markdown file. |
-| **History Management** | |
-| `/history attachments list` | List all file attachments currently in the conversation history, with their IDs. |
-| `/history attachments remove <id>` | Remove an attachment from history using its ID (e.g., `2:1`). |
 | **Pending Attachment Management** | |
 | `/attachments list` | List all pending attachments for the next prompt. |
 | `/attachments remove <index>`| Remove a pending attachment by its index. |
 | `/attachments clear` | Remove all pending attachments. |
+| **History Management** | |
+| `/history attachments list` | List all file attachments currently in the conversation history, with their IDs. |
+| `/history attachments remove <id>` | Remove an attachment from history using its ID (e.g., `2:1`). |
 | **Session Management** | |
 | `/session new` | Start a new, unsaved session (same as `/clear`). |
 | `/session list` | List all saved conversation sessions. |
