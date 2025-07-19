@@ -98,3 +98,15 @@ This version introduced significant robustness improvements to file handling and
 *   **Refactoring:**
     *   **Centralized cURL Logic:** A new `perform_api_curl_request` function was created to abstract the core cURL execution, further reducing code duplication within the API-calling functions (`send_api_request`, `get_token_count`).
     *   **Path Management:** The logic for finding the application's configuration directory was centralized into a `get_base_app_path` function, simplifying path construction throughout the application.
+
+### **Version 1.0.9**
+
+This final version added new features for exploring the API's capabilities and exporting conversations, along with more granular control over generation parameters.
+
+*   **Features:**
+    *   **Model Listing:** A new `/models` command was added to fetch and display a list of all available models from the API.
+    *   **Markdown Export:** A `/export <file.md>` command was introduced to save the entire conversation history into a human-readable Markdown file.
+    *   **Top-K and Top-P Control:** Users can now set the `topK` and `topP` sampling parameters via command-line arguments (`--topk`, `--topp`) or interactive commands (`/topk`, `/topp`).
+*   **Improvements:**
+    *   The help message (`/help`) was updated to include all the new commands.
+    *   Configuration loading was updated to support the new `top_k` and `top_p` settings.
