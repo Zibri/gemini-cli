@@ -36,6 +36,7 @@
   #include <windows.h>
   #include <direct.h>
   #include "linenoise.h"
+  #include <conio.h>
   #define MKDIR(path) _mkdir(path)
   #define STRCASECMP _stricmp
   #define PATH_MAX MAX_PATH
@@ -1618,26 +1619,53 @@ void load_configuration(AppState* state) {
 }
 
 void get_api_key_securely(char* api_key_buffer, size_t buffer_size) {
-    fprintf(stderr,"Enter your API Key: ");
+    fprintf(stderr, "Enter your API Key: ");
     fflush(stderr);
+    memset(api_key_buffer, 0, buffer_size);
+    size_t i = 0;
+
 #ifdef _WIN32
-    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
-    DWORD mode = 0;
-    GetConsoleMode(hStdin, &mode);
-    SetConsoleMode(hStdin, mode & (~ENABLE_ECHO_INPUT));
-    if (!fgets(api_key_buffer, buffer_size, stdin)) { api_key_buffer[0] = '\0'; }
-    SetConsoleMode(hStdin, mode);
+    char ch;
+    while (i < buffer_size - 1) {
+        ch = _getch();
+        if (ch == '\r' || ch == '\n') { // Handle Enter key
+            break;
+        } else if (ch == '\b') { // Handle backspace
+            if (i > 0) {
+                i--;
+                fprintf(stderr, "\b \b"); // Erase asterisk from console
+            }
+        } else if (isprint((unsigned char)ch)) { // Handle printable characters
+            api_key_buffer[i++] = ch;
+            fprintf(stderr, "*");
+        }
+    }
 #else
+
     struct termios old_term, new_term;
     tcgetattr(STDIN_FILENO, &old_term);
     new_term = old_term;
-    new_term.c_lflag &= ~ECHO;
+    new_term.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-    if (!fgets(api_key_buffer, buffer_size, stdin)) { api_key_buffer[0] = '\0'; }
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+
+    int c;
+    while (i < buffer_size - 1 && (c = getchar()) != '\n' && c != '\r' && c != EOF) {
+        if (c == 127 || c == 8) { // Handle backspace (ASCII 127 or 8)
+            if (i > 0) {
+                i--;
+                fprintf(stderr, "\b \b"); // Erase asterisk from console
+            }
+        } else if (isprint(c)) {
+            api_key_buffer[i++] = (char)c;
+            fprintf(stderr, "*");
+            fflush(stderr); // Flush stderr to ensure asterisk appears immediately
+        }
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_term); // Restore terminal settings
 #endif
-    fprintf(stderr,"\n");
-    api_key_buffer[strcspn(api_key_buffer, "\r\n")] = 0;
+
+    fprintf(stderr, "\n");
+    api_key_buffer[i] = '\0'; // Null-terminate the string
 }
 
 cJSON* build_request_json(AppState* state) {
