@@ -120,6 +120,8 @@ bool build_session_path(const char* session_name, char* path_buffer, size_t buff
 long perform_api_curl_request(AppState* state, const char* endpoint, const char* compressed_payload, size_t payload_size, size_t (*callback)(void*, size_t, size_t, void*), void* callback_data);
 void export_history_to_markdown(AppState* state, const char* filepath);
 void list_available_models(AppState* state);
+void save_configuration(AppState* state);
+void load_configuration_from_path(AppState* state, const char* filepath);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -188,7 +190,20 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
 
     initialize_default_state(&state);
 
-    load_configuration(&state);
+    const char* custom_config_path = NULL;
+    for (int i = 1; i < argc - 1; i++) {
+        if (STRCASECMP(argv[i], "-c") == 0 || STRCASECMP(argv[i], "--config") == 0) {
+            custom_config_path = argv[i + 1];
+            break;
+        }
+    }
+
+    if (custom_config_path) {
+        load_configuration_from_path(&state, custom_config_path);
+        fprintf(stderr, "Loaded configuration from: %s\n", custom_config_path);
+    } else {
+        load_configuration(&state); // Load from default path.
+    }
 
     int first_arg_index = parse_common_options(argc, argv, &state);
 
@@ -378,6 +393,7 @@ if (interactive) {
                        "  /exit, /quit               - Exit the program.\n"
                        "  /clear                     - Clear history and attachments for a new chat.\n"
                        "  /stats                     - Show session statistics (tokens, model, etc.).\n"
+                       "  /config <save|load>        - Save or load settings to the config file.\n"
                        "  /system [prompt]           - Set/show the system prompt for the conversation.\n"
                        "  /clear_system              - Remove the system prompt.\n"
                        "  /budget [tokens]           - Set/show the max thinking budget for the model.\n"
@@ -385,6 +401,8 @@ if (interactive) {
                        "  /temp [temperature]        - Set/show the temperature for the response.\n"
                        "  /topp [float]              - Set/show the topK for the response.\n"
                        "  /topk [integer]            - Set/show the topP for the response.\n"
+                       "  /grounding [on|off]        - Set/show Google Search grounding.\n"
+                       "  /urlcontext [on|off]       - Set/show URL context fetching.\n"                       
                        "  /attach <file> [prompt]    - Attach a file. Optionally add prompt on same line.\n"
                        "  /paste                     - Paste text from stdin as an attachment.\n"
                        "  /savelast <file.txt>       - Save the last model response to a text file.\n"
@@ -459,6 +477,18 @@ if (interactive) {
                     }
                 } else {
                     fprintf(stderr,"Unknown session command: '%s'. Use '/help' to see options.\n", sub_command);
+                }
+            } else if (strcmp(command_buffer, "/config") == 0) {
+                char sub_command[64] = {0};
+                sscanf(arg_start, "%63s", sub_command);
+
+                if (strcmp(sub_command, "save") == 0) {
+                    save_configuration(&state);
+                } else if (strcmp(sub_command, "load") == 0) {
+                    load_configuration(&state);
+                    fprintf(stderr, "Configuration reloaded from file.\n");
+                } else {
+                    fprintf(stderr, "Usage: /config <save|load>\n");
                 }
             } else if (strcmp(command_buffer, "/models") == 0) {
                 list_available_models(&state);
@@ -594,6 +624,30 @@ if (interactive) {
                         state.temperature = temp;
                         fprintf(stderr, "Temperature set to %.2f.\n", state.temperature);
                     }
+                }
+            } else if (strcmp(command_buffer, "/grounding") == 0) {
+                if (*arg_start == '\0') {
+                    fprintf(stderr, "Google grounding is %s.\n", state.google_grounding ? "ON" : "OFF");
+                } else if (STRCASECMP(arg_start, "on") == 0) {
+                    state.google_grounding = true;
+                    fprintf(stderr, "Google grounding turned ON.\n");
+                } else if (STRCASECMP(arg_start, "off") == 0) {
+                    state.google_grounding = false;
+                    fprintf(stderr, "Google grounding turned OFF.\n");
+                } else {
+                    fprintf(stderr, "Usage: /grounding [on|off]\n");
+                }
+            } else if (strcmp(command_buffer, "/urlcontext") == 0) {
+                if (*arg_start == '\0') {
+                    fprintf(stderr, "URL context is %s.\n", state.url_context ? "ON" : "OFF");
+                } else if (STRCASECMP(arg_start, "on") == 0) {
+                    state.url_context = true;
+                    fprintf(stderr, "URL context turned ON.\n");
+                } else if (STRCASECMP(arg_start, "off") == 0) {
+                    state.url_context = false;
+                    fprintf(stderr, "URL context turned OFF.\n");
+                } else {
+                    fprintf(stderr, "Usage: /urlcontext [on|off]\n");
                 }
             } else if (strcmp(command_buffer, "/save") == 0) {
                 if (!is_path_safe(arg_start)) {
@@ -846,6 +900,69 @@ if (interactive) {
 
 // --- Helper and Utility Functions ---
 
+/**
+ * @brief Saves the current application settings to the config.json file.
+ * @param state The current application state.
+ */
+void save_configuration(AppState* state) {
+    char config_path[PATH_MAX];
+    get_config_path(config_path, sizeof(config_path));
+    if (config_path[0] == '\0') {
+        fprintf(stderr, "Error: Could not determine configuration file path.\n");
+        return;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    if (!root) {
+        fprintf(stderr, "Error: Failed to create JSON object for configuration.\n");
+        return;
+    }
+
+    // Add all configurable values to the JSON object
+    cJSON_AddStringToObject(root, "model", state->model_name);
+    cJSON_AddNumberToObject(root, "temperature", state->temperature);
+    cJSON_AddNumberToObject(root, "seed", state->seed);
+    if (state->system_prompt) {
+        cJSON_AddStringToObject(root, "system_prompt", state->system_prompt);
+    }
+    if (state->api_key[0] != '\0') {
+        cJSON_AddStringToObject(root, "api_key", state->api_key);
+    }
+    if (state->origin[0] != '\0') {
+        cJSON_AddStringToObject(root, "origin", state->origin);
+    }
+    cJSON_AddNumberToObject(root, "max_output_tokens", state->max_output_tokens);
+    cJSON_AddNumberToObject(root, "thinking_budget", state->thinking_budget);
+    cJSON_AddBoolToObject(root, "google_grounding", state->google_grounding);
+    cJSON_AddBoolToObject(root, "url_context", state->url_context);
+    if (state->topK > 0) {
+        cJSON_AddNumberToObject(root, "top_k", state->topK);
+    }
+    if (state->topP > 0.0f) {
+        cJSON_AddNumberToObject(root, "top_p", state->topP);
+    }
+
+    char* json_string = cJSON_Print(root);
+    cJSON_Delete(root);
+
+    if (!json_string) {
+        fprintf(stderr, "Error: Failed to format configuration to JSON string.\n");
+        return;
+    }
+
+    FILE* file = fopen(config_path, "w");
+    if (!file) {
+        perror("Failed to open configuration file for writing");
+        free(json_string);
+        return;
+    }
+
+    fputs(json_string, file);
+    fclose(file);
+    free(json_string);
+
+    fprintf(stderr, "Configuration saved to %s\n", config_path);
+}
 /**
  * @brief Performs a generic cURL GET request to a specified URL.
  * @param url The full URL to request.
@@ -1231,6 +1348,9 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
             strncpy(state->model_name, argv[i + 1], sizeof(state->model_name) - 1);
             state->model_name[sizeof(state->model_name) - 1] = '\0';
             i++;
+        } else if ((STRCASECMP(argv[i], "-c") == 0 || STRCASECMP(argv[i], "--config") == 0) && (i + 1 < argc)) {
+            // The config was already loaded. We just skip this argument and its value.
+            i++;
         } else if ((STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0) && (i + 1 < argc)) {
             state->temperature = atof(argv[i + 1]);
             i++;
@@ -1253,10 +1373,11 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
             state->google_grounding = false;
         } else if (STRCASECMP(argv[i], "-nu") == 0 || STRCASECMP(argv[i], "--no-url-context") == 0) {
             state->url_context = false;
+        } else if ((STRCASECMP(argv[i], "-l") == 0 || STRCASECMP(argv[i], "--list") == 0)) {
+            list_available_models(state);
+            exit(0);
         } else if ((STRCASECMP(argv[i], "-h") == 0 || STRCASECMP(argv[i], "--help") == 0)) {
             print_usage(argv[0]);
-            // Returning a special value or setting a flag might be cleaner,
-            // but for this purpose, exiting directly is what the original code did.
             exit(0);
         } else {
             // This is not a recognized option, so stop parsing and return its index.
@@ -1274,28 +1395,16 @@ void print_usage(const char* prog_name) {
     fprintf(stderr, "The client operates in two modes:\n");
     fprintf(stderr, "  - Interactive Mode: (Default) A full chat session with history and commands.\n");
     fprintf(stderr, "  - Non-Interactive Mode: Engaged if input is piped.\n\n");
-//    fprintf(stderr, "  - Non-Interactive Mode: Engaged if input is piped or a prompt is given as an argument.\n\n");
     fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -c, --config <path>       Load configuration from a specific file path.\n");
     fprintf(stderr, "  -m, --model <name>        Specify the model name (e.g., gemini-2.5-pro).\n");
     fprintf(stderr, "  -t, --temp <float>        Set the generation temperature (0.0 to 1.0).\n");
     fprintf(stderr, "  -s, --seed <int>          Set the generation seed for reproducible outputs.\n");
     fprintf(stderr, "  -o, --max-tokens <int>    Set the maximum number of tokens in the response.\n");
     fprintf(stderr, "  -b, --budget <int>        Set the model's max 'thinking' token budget.\n");
     fprintf(stderr, "      --help                Show this help message and exit.\n\n");
-/*
-    fprintf(stderr, "Non-Interactive Examples:\n");
-    fprintf(stderr, "  # Quick question\n");
-    fprintf(stderr, "  %s \"What is the capital of Nepal?\"\n\n", prog_name);
-    fprintf(stderr, "  # Summarize a file by piping its content\n");
-    fprintf(stderr, "  cat main.c | %s \"Summarize this C code.\"\n\n", prog_name);
-    fprintf(stderr, "Interactive Examples:\n");
-    fprintf(stderr, "  # Start a standard interactive session\n");
-    fprintf(stderr, "  %s\n\n", prog_name);
-    fprintf(stderr, "  # Start a session with a specific model and attach files\n");
-    fprintf(stderr, "  %s -m gemini-2.5-flash-latest main.c Makefile\n\n", prog_name);
-    fprintf(stderr, "For commands available within the interactive session, type '/help'.\n");
-*/
 }
+
 /**
  * @brief Sets the application state to its default values.
  */
@@ -1442,13 +1551,18 @@ void get_config_path(char* buffer, size_t buffer_size) {
     snprintf(buffer, buffer_size, "%s%s%s", base_app_path, separator, config_file_name);
 }
 
-void load_configuration(AppState* state) {
-    char config_path[PATH_MAX];
-    get_config_path(config_path, sizeof(config_path));
-    if (config_path[0] == '\0') return;
-
-    FILE* file = fopen(config_path, "r");
-    if (!file) return;
+/**
+ * @brief Loads application settings from a specified configuration file path.
+ * @param state The application state to update.
+ * @param filepath The path to the config.json file to load.
+ */
+void load_configuration_from_path(AppState* state, const char* filepath) {
+    FILE* file = fopen(filepath, "r");
+    if (!file) {
+        // This is not an error if the default config doesn't exist, so don't print anything.
+        // It would be an error if the user specified a file, which is handled in parse_common_options.
+        return;
+    }
 
     fseek(file, 0, SEEK_END);
     long length = ftell(file);
@@ -1473,7 +1587,7 @@ void load_configuration(AppState* state) {
 
     if (!cJSON_IsObject(root)) {
         if (root) cJSON_Delete(root);
-        fprintf(stderr,"Warning: Could not parse configuration file or it is not a valid JSON object.\n");
+        fprintf(stderr,"Warning: Could not parse configuration file '%s' or it is not a valid JSON object.\n", filepath);
         return;
     }
 
@@ -1490,8 +1604,17 @@ void load_configuration(AppState* state) {
     json_read_bool(root, "url_context", &state->url_context);
     json_read_int(root, "top_k", &state->topK);
     json_read_float(root, "top_p", &state->topP);
-    
+
     cJSON_Delete(root);
+}
+
+// This function handles loading the default configuration.
+void load_configuration(AppState* state) {
+    char config_path[PATH_MAX];
+    get_config_path(config_path, sizeof(config_path));
+    if (config_path[0] == '\0') return;
+
+    load_configuration_from_path(state, config_path);
 }
 
 void get_api_key_securely(char* api_key_buffer, size_t buffer_size) {
