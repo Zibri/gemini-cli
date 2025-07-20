@@ -1377,6 +1377,17 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
         } else if ((STRCASECMP(argv[i], "-l") == 0 || STRCASECMP(argv[i], "--list") == 0)) {
             list_available_models(state);
             exit(0);
+        } else if (STRCASECMP(argv[i], "--list-sessions") == 0) {
+            list_sessions();
+            exit(0);
+        } else if (STRCASECMP(argv[i], "--load-session") == 0 && (i + 1 < argc)) {
+            char file_path[PATH_MAX];
+            if (build_session_path(argv[i + 1], file_path, sizeof(file_path))) {
+                load_history_from_file(state, file_path);
+                strncpy(state->current_session_name, argv[i + 1], sizeof(state->current_session_name) - 1);
+                state->current_session_name[sizeof(state->current_session_name) - 1] = '\0';
+            }
+            i++;
         } else if ((STRCASECMP(argv[i], "-h") == 0 || STRCASECMP(argv[i], "--help") == 0)) {
             print_usage(argv[0]);
             exit(0);
@@ -1387,6 +1398,7 @@ int parse_common_options(int argc, char* argv[], AppState* state) {
     }
     return i; // Return the index after all arguments have been processed.
 }
+
 /**
  * @brief Prints the command-line usage instructions and exits.
  */
@@ -1395,7 +1407,7 @@ void print_usage(const char* prog_name) {
     fprintf(stderr, "A portable, feature-rich command-line client for the Google Gemini API.\n\n");
     fprintf(stderr, "The client operates in two modes:\n");
     fprintf(stderr, "  - Interactive Mode: (Default) A full chat session with history and commands.\n");
-    fprintf(stderr, "  - Non-Interactive Mode: Engaged if input is piped.\n\n");
+    fprintf(stderr, "  - Non-Interactive Mode: Engaged if input or output are piped.\n\n");
     fprintf(stderr, "Options:\n");
     fprintf(stderr, "  -c, --config <path>       Load configuration from a specific file path.\n");
     fprintf(stderr, "  -m, --model <name>        Specify the model name (e.g., gemini-2.5-pro).\n");
@@ -1403,7 +1415,9 @@ void print_usage(const char* prog_name) {
     fprintf(stderr, "  -s, --seed <int>          Set the generation seed for reproducible outputs.\n");
     fprintf(stderr, "  -o, --max-tokens <int>    Set the maximum number of tokens in the response.\n");
     fprintf(stderr, "  -b, --budget <int>        Set the model's max 'thinking' token budget.\n");
-    fprintf(stderr, "      --help                Show this help message and exit.\n\n");
+    fprintf(stderr, "      --list-sessions       List all saved sessions and exit.\n");
+    fprintf(stderr, "      --load-session <name> Load a saved session by name.\n");
+    fprintf(stderr, "  -h  --help                Show this help message and exit.\n\n");
 }
 
 /**
