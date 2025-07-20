@@ -138,3 +138,15 @@ This is a bugfix and reliability release focused on improving piped input and si
     *   **Correct Ctrl+D Handling:** The `handle_attachment_from_stream` function was changed to use a low-level `read()` call instead of `fread()`. This fixes a critical bug where pressing `Ctrl+D` in an interactive terminal to signal the end of input was not being correctly detected due to stdio buffering.
 *   **Refactoring:**
     *   **Simplified Mode Detection:** The logic in the `main` function for determining whether to run in interactive or non-interactive mode was simplified. It now uses a single boolean variable, `is_interactive`, making the code cleaner and the control flow easier to understand.
+
+### **Version 1.0.13**
+
+This version adds command-line session management features for a more flexible workflow.
+
+*   **Features:**
+    *   **Command-Line Session Management:**
+        *   `--list-sessions`: A new flag to list all saved sessions directly from the command line and exit.
+        *   `--load-session <name>`: A new flag to load a previous chat session by name upon starting the client.
+*   **Improvements:**
+    *   **Enhanced Help Message:** The `print_usage` function was updated to include the new session management flags.
+    *   **Refined Mode Detection:** The check for non-interactive mode was improved to trigger if either input or output is piped.
