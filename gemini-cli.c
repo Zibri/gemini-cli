@@ -123,6 +123,7 @@ void export_history_to_markdown(AppState* state, const char* filepath);
 void list_available_models(AppState* state);
 void save_configuration(AppState* state);
 void load_configuration_from_path(AppState* state, const char* filepath);
+void get_masked_input(const char* prompt, char* buffer, size_t buffer_size);
 
 // --- Core API and Stream Processing ---
 static void process_line(char* line, MemoryStruct* mem) {
@@ -1656,61 +1657,97 @@ void load_configuration(AppState* state) {
     load_configuration_from_path(state, config_path);
 }
 
-void get_api_key_securely(AppState* state) {
-    // Part 1: Get API Key
-    fprintf(stderr, "Enter your API Key: ");
+/**
+ * @brief Prompts the user and reads their input without echoing it to the screen.
+ *
+ * This function handles both Windows and Unix-like systems to read character
+ * by character, printing an asterisk '*' for each character entered. It also
+ * correctly handles backspace.
+ *
+ * @param prompt The message to display to the user.
+ * @param buffer The character buffer to store the user's input.
+ * @param buffer_size The total size of the buffer.
+ */
+void get_masked_input(const char* prompt, char* buffer, size_t buffer_size) {
+    fprintf(stderr, "%s", prompt);
     fflush(stderr);
-    char* api_key_buffer = state->api_key;
-    size_t buffer_size = sizeof(state->api_key);
-    memset(api_key_buffer, 0, buffer_size);
+
+    memset(buffer, 0, buffer_size);
     size_t i = 0;
 
 #ifdef _WIN32
     char ch;
     while (i < buffer_size - 1) {
         ch = _getch();
-        if (ch == '\r' || ch == '\n') { break; }
-        else if (ch == '\b') { if (i > 0) { i--; fprintf(stderr, "\b \b"); } }
-        else if (isprint((unsigned char)ch)) { api_key_buffer[i++] = ch; fprintf(stderr, "*"); }
+        if (ch == '\r' || ch == '\n') { // Enter key
+            break;
+        } else if (ch == '\b') { // Backspace
+            if (i > 0) {
+                i--;
+                fprintf(stderr, "\b \b"); // Erase the character from the screen
+            }
+        } else if (isprint((unsigned char)ch)) {
+            buffer[i++] = ch;
+            fprintf(stderr, "*");
+        }
     }
-#else
+#else // For Unix-like systems (Linux, macOS)
     struct termios old_term, new_term;
     tcgetattr(STDIN_FILENO, &old_term);
     new_term = old_term;
-    new_term.c_lflag &= ~(ECHO | ICANON);
+    new_term.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+
     int c;
     while (i < buffer_size - 1 && (c = getchar()) != '\n' && c != '\r' && c != EOF) {
-        if (c == 127 || c == 8) { if (i > 0) { i--; fprintf(stderr, "\b \b"); } }
-        else if (isprint(c)) { api_key_buffer[i++] = (char)c; fprintf(stderr, "*"); fflush(stderr); }
+        if (c == 127 || c == 8) { // Backspace (ASCII 127) or Ctrl+H (ASCII 8)
+            if (i > 0) {
+                i--;
+                fprintf(stderr, "\b \b"); // Erase the character from the screen
+            }
+        } else if (isprint(c)) {
+            buffer[i++] = (char)c;
+            fprintf(stderr, "*");
+            fflush(stderr);
+        }
     }
+    // Restore the original terminal settings
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
 #endif
 
+    buffer[i] = '\0'; // Null-terminate the string
     fprintf(stderr, "\n");
-    api_key_buffer[i] = '\0';
+}
 
-    // Part 2: Get Origin (only if not already set by config or env var)
+
+/**
+ * @brief Securely gets the API key and origin from the user.
+ *
+ * This function prompts the user for their API key and origin. Input for both
+ * fields is masked with asterisks. If the origin is not already set, it prompts
+ * for it. If the user presses Enter without typing an origin, it preserves the
+ * default value.
+ *
+ * @param state A pointer to the AppState struct where the key and origin will be stored.
+ */
+void get_api_key_securely(AppState* state) {
+    // Part 1: Get API Key using the helper function
+    get_masked_input("Enter your API Key: ", state->api_key, sizeof(state->api_key));
+
+    // Part 2: Get Origin (only if not already set)
     if (strcmp(state->origin, "default") == 0) {
-        fprintf(stderr, "Enter your Origin (press Enter for 'default'): ");
-        fflush(stderr);
-
         char origin_input_buffer[128];
-        if (fgets(origin_input_buffer, sizeof(origin_input_buffer), stdin) != NULL) {
-            origin_input_buffer[strcspn(origin_input_buffer, "\r\n")] = 0; // Remove newline
+        get_masked_input("Enter your Origin (press Enter for 'default'): ", origin_input_buffer, sizeof(origin_input_buffer));
 
-            if (origin_input_buffer[0] != '\0') {
-                // User entered a custom origin, so copy it.
-                strncpy(state->origin, origin_input_buffer, sizeof(state->origin) - 1);
-                state->origin[sizeof(state->origin) - 1] = '\0';
-            }
-            // If they entered nothing, state->origin remains "default", which is correct.
-        } else {
-            // fgets error, stick with default
-            fprintf(stderr, "\nWarning: Could not read origin input. Using 'default'.\n");
+        // If the user entered something, copy it to the state.
+        // Otherwise, state->origin remains "default".
+        if (origin_input_buffer[0] != '\0') {
+            strncpy(state->origin, origin_input_buffer, sizeof(state->origin) - 1);
+            state->origin[sizeof(state->origin) - 1] = '\0'; // Ensure null-termination
         }
     }
 }
+
 
 cJSON* build_request_json(AppState* state) {
     cJSON* root = cJSON_CreateObject();

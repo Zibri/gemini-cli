@@ -159,3 +159,13 @@ This is a reliability and user experience release that improves argument handlin
     *   **Robust Argument Handling:** Command-line arguments are now checked more reliably to differentiate between file paths and prompt text. The client now attempts to open arguments as files, and only if that fails or the path points to a non-regular file (like a directory), is it treated as part of the initial prompt.
     *   **Interactive Origin Input:** The secure credential input process has been enhanced. If the API key is not set by an environment variable or config file, the tool will now prompt for the `Origin` immediately after prompting for the API key, streamlining the first-time setup.
     *   **Cross-Platform Path Compatibility:** Session file paths are now constructed with the correct directory separator (`/` or `\`) based on the operating system, improving reliability on Windows.
+
+### **Version 1.0.15**
+
+This release enhances security and refactors the credential input process for better code maintainability.
+
+*   **Improvements:**
+    *   **Secure Origin Input:** The prompt for the API `Origin` now masks user input with asterisks, similar to the API key prompt. This prevents credentials from being accidentally exposed on-screen during the initial setup.
+*   **Refactoring:**
+    *   **Modularized Secure Input:** A new `get_masked_input` helper function was created to handle all terminal-masked input. This abstracts the platform-specific (Windows/Unix) logic for disabling terminal echo.
+    *   **Simplified Credential Logic:** The `get_api_key_securely` function was refactored to use the new `get_masked_input` helper, which reduces code duplication and makes the credential-gathering process cleaner and more secure.
