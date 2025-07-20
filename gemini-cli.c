@@ -97,7 +97,7 @@ const char* get_mime_type(const char* filename);
 GzipResult gzip_compress(const unsigned char* input_data, size_t input_size);
 cJSON* build_request_json(AppState* state);
 bool is_path_safe(const char* path);
-void get_api_key_securely(char* api_key_buffer, size_t buffer_size);
+void get_api_key_securely(AppState* state);
 void parse_and_print_error_json(const char* error_buffer);
 void load_configuration(AppState* state);
 void get_config_path(char* buffer, size_t buffer_size);
@@ -219,12 +219,31 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             continue;
         }
 
-        struct stat st;
-        if (stat(argv[i], &st) == 0) {
-            // Argument is an existing file, so attach it
-            handle_attachment_from_stream(NULL, argv[i], get_mime_type(argv[i]), &state);
+        FILE* file_arg = fopen(argv[i], "rb");
+        if (file_arg) {
+            struct stat st;
+            // Use fstat on the open file descriptor to ensure we check the same file we opened.
+            if (fstat(fileno(file_arg), &st) == 0 && S_ISREG(st.st_mode)) {
+                // It's a regular file. The handle is passed to the function, which reads from it.
+                // The handle is closed here after the function returns, ensuring proper resource management.
+                handle_attachment_from_stream(file_arg, argv[i], get_mime_type(argv[i]), &state);
+            } else {
+                // It's something else (like a directory), so treat it as prompt text.
+                size_t arg_len = strlen(argv[i]);
+                if (initial_prompt_len + arg_len + 2 < sizeof(initial_prompt_buffer)) {
+                    if (initial_prompt_len > 0) {
+                        initial_prompt_buffer[initial_prompt_len++] = ' ';
+                    }
+                    strcpy(initial_prompt_buffer + initial_prompt_len, argv[i]);
+                    initial_prompt_len += arg_len;
+                } else {
+                    fprintf(stderr, "Warning: Initial prompt from arguments is too long, argument ignored: %s\n", argv[i]);
+                }
+            }
+            // The file handle must be closed here in the scope that opened it.
+            fclose(file_arg);
         } else {
-            // Argument is not a file, so append it to the prompt buffer
+            // fopen failed (e.g., no such file, no permissions), so treat as prompt text.
             size_t arg_len = strlen(argv[i]);
             if (initial_prompt_len + arg_len + 2 < sizeof(initial_prompt_buffer)) {
                 if (initial_prompt_len > 0) {
@@ -264,20 +283,20 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     	
     }
 	
+    char* origin_from_env = getenv("GEMINI_API_KEY_ORIGIN");
+    if (origin_from_env) {
+        strncpy(state.origin, origin_from_env, sizeof(state.origin) - 1);
+        if (interactive) fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
+    }
+
     char* key_from_env = getenv("GEMINI_API_KEY");
     if (key_from_env) {
         strncpy(state.api_key, key_from_env, sizeof(state.api_key) - 1);
         if (interactive) fprintf(stderr,"API Key loaded from environment variable.\n");
     } else if (state.api_key[0] == '\0') {
-        get_api_key_securely(state.api_key, sizeof(state.api_key));
+        get_api_key_securely(&state);
     } else {
         if (interactive) fprintf(stderr,"API Key loaded from configuration file.\n");
-    }
-
-    char* origin_from_env = getenv("GEMINI_API_KEY_ORIGIN");
-    if (origin_from_env) {
-        strncpy(state.origin, origin_from_env, sizeof(state.origin) - 1);
-        if (interactive) fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
     }
     
     if (interactive) {
@@ -1202,7 +1221,12 @@ bool build_session_path(const char* session_name, char* path_buffer, size_t buff
     }
 
     // Safely construct the final path.
-    snprintf(path_buffer, buffer_size, "%s/%s.json", sessions_path, session_name);
+#ifdef _WIN32
+    const char* separator = "\\";
+#else
+    const char* separator = "/";
+#endif
+    snprintf(path_buffer, buffer_size, "%s%s%s.json", sessions_path, separator, session_name);
     return true;
 }
 
@@ -1632,9 +1656,12 @@ void load_configuration(AppState* state) {
     load_configuration_from_path(state, config_path);
 }
 
-void get_api_key_securely(char* api_key_buffer, size_t buffer_size) {
+void get_api_key_securely(AppState* state) {
+    // Part 1: Get API Key
     fprintf(stderr, "Enter your API Key: ");
     fflush(stderr);
+    char* api_key_buffer = state->api_key;
+    size_t buffer_size = sizeof(state->api_key);
     memset(api_key_buffer, 0, buffer_size);
     size_t i = 0;
 
@@ -1642,44 +1669,47 @@ void get_api_key_securely(char* api_key_buffer, size_t buffer_size) {
     char ch;
     while (i < buffer_size - 1) {
         ch = _getch();
-        if (ch == '\r' || ch == '\n') { // Handle Enter key
-            break;
-        } else if (ch == '\b') { // Handle backspace
-            if (i > 0) {
-                i--;
-                fprintf(stderr, "\b \b"); // Erase asterisk from console
-            }
-        } else if (isprint((unsigned char)ch)) { // Handle printable characters
-            api_key_buffer[i++] = ch;
-            fprintf(stderr, "*");
-        }
+        if (ch == '\r' || ch == '\n') { break; }
+        else if (ch == '\b') { if (i > 0) { i--; fprintf(stderr, "\b \b"); } }
+        else if (isprint((unsigned char)ch)) { api_key_buffer[i++] = ch; fprintf(stderr, "*"); }
     }
 #else
-
     struct termios old_term, new_term;
     tcgetattr(STDIN_FILENO, &old_term);
     new_term = old_term;
-    new_term.c_lflag &= ~(ECHO | ICANON); // Disable echo and canonical mode
+    new_term.c_lflag &= ~(ECHO | ICANON);
     tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
-
     int c;
     while (i < buffer_size - 1 && (c = getchar()) != '\n' && c != '\r' && c != EOF) {
-        if (c == 127 || c == 8) { // Handle backspace (ASCII 127 or 8)
-            if (i > 0) {
-                i--;
-                fprintf(stderr, "\b \b"); // Erase asterisk from console
-            }
-        } else if (isprint(c)) {
-            api_key_buffer[i++] = (char)c;
-            fprintf(stderr, "*");
-            fflush(stderr); // Flush stderr to ensure asterisk appears immediately
-        }
+        if (c == 127 || c == 8) { if (i > 0) { i--; fprintf(stderr, "\b \b"); } }
+        else if (isprint(c)) { api_key_buffer[i++] = (char)c; fprintf(stderr, "*"); fflush(stderr); }
     }
-    tcsetattr(STDIN_FILENO, TCSANOW, &old_term); // Restore terminal settings
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
 #endif
 
     fprintf(stderr, "\n");
-    api_key_buffer[i] = '\0'; // Null-terminate the string
+    api_key_buffer[i] = '\0';
+
+    // Part 2: Get Origin (only if not already set by config or env var)
+    if (strcmp(state->origin, "default") == 0) {
+        fprintf(stderr, "Enter your Origin (press Enter for 'default'): ");
+        fflush(stderr);
+
+        char origin_input_buffer[128];
+        if (fgets(origin_input_buffer, sizeof(origin_input_buffer), stdin) != NULL) {
+            origin_input_buffer[strcspn(origin_input_buffer, "\r\n")] = 0; // Remove newline
+
+            if (origin_input_buffer[0] != '\0') {
+                // User entered a custom origin, so copy it.
+                strncpy(state->origin, origin_input_buffer, sizeof(state->origin) - 1);
+                state->origin[sizeof(state->origin) - 1] = '\0';
+            }
+            // If they entered nothing, state->origin remains "default", which is correct.
+        } else {
+            // fgets error, stick with default
+            fprintf(stderr, "\nWarning: Could not read origin input. Using 'default'.\n");
+        }
+    }
 }
 
 cJSON* build_request_json(AppState* state) {

@@ -150,3 +150,12 @@ This version adds command-line session management features for a more flexible w
 *   **Improvements:**
     *   **Enhanced Help Message:** The `print_usage` function was updated to include the new session management flags.
     *   **Refined Mode Detection:** The check for non-interactive mode was improved to trigger if either input or output is piped.
+
+### **Version 1.0.14**
+
+This is a reliability and user experience release that improves argument handling, cross-platform support, and the initial setup process.
+
+*   **Improvements:**
+    *   **Robust Argument Handling:** Command-line arguments are now checked more reliably to differentiate between file paths and prompt text. The client now attempts to open arguments as files, and only if that fails or the path points to a non-regular file (like a directory), is it treated as part of the initial prompt.
+    *   **Interactive Origin Input:** The secure credential input process has been enhanced. If the API key is not set by an environment variable or config file, the tool will now prompt for the `Origin` immediately after prompting for the API key, streamlining the first-time setup.
+    *   **Cross-Platform Path Compatibility:** Session file paths are now constructed with the correct directory separator (`/` or `\`) based on the operating system, improving reliability on Windows.
