@@ -2048,14 +2048,15 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         return;
     }
 
-    size_t bytes_read;
-    // This is the idiomatic way to read from a stream until it ends.
-    // The loop continues as long as fread() returns a positive number of bytes.
-    while ((bytes_read = fread(buffer + total_read, 1, 1024, stream)) > 0) {
-        total_read += bytes_read;
+    // Use the low-level `read` call to bypass stdio buffering issues with `Ctrl+D`.
+    // This correctly handles EOF from interactive terminals.
+    ssize_t bytes_read;
+    int fd = fileno(stream);
+
+    while ((bytes_read = read(fd, buffer + total_read, 1024)) > 0) {
+        total_read += (size_t)bytes_read;
 
         // Check if we need to resize *before* the next read attempt.
-        // We ensure there's always at least 1024 bytes of space available.
         if (capacity - total_read < 1024) {
             size_t new_capacity = capacity * 2;
             // Handle potential integer overflow for extremely large attachments.
@@ -2078,8 +2079,8 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         }
     }
 
-    // After the loop, check if it terminated due to an error rather than a clean EOF.
-    if (ferror(stream)) {
+    // After the loop, check if it terminated due to a read error.
+    if (bytes_read < 0) {
         perror("Error reading from attachment stream");
         free(buffer);
         if (is_from_file) fclose(stream);
@@ -2235,16 +2236,12 @@ int main(int argc, char* argv[]) {
         int is_stdout_a_terminal = isatty(fileno(stdout));
     #endif
 
-    if (is_stdin_a_terminal && is_stdout_a_terminal) {
-        // Both input and output are the user's keyboard/screen.
-        // Start the full interactive session.
-        generate_session(argc, argv, true, is_stdin_a_terminal);
-    } else {
-        // Either input is a pipe/file or output is a pipe/file.
-        // Run in non-interactive/scripting mode.
-        generate_session(argc, argv, false, false);
-    }
+    // An interactive session requires both stdin and stdout to be terminals.
+    bool is_interactive = is_stdin_a_terminal && is_stdout_a_terminal;
 
+    // Start the session, passing the determined mode and stdin status.
+    generate_session(argc, argv, is_interactive, is_stdin_a_terminal);
+    
     curl_global_cleanup();
     return 0;
 }
