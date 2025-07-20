@@ -129,3 +129,12 @@ This version focused on improving the security and user experience of entering c
 
 *   **Improvements:**
     *   **Secure API Key Input:** The `get_api_key_securely` function was completely rewritten. It now properly disables terminal echoing while the user types their API key. Instead of a blank screen, it prints an asterisk (`*`) for each character typed, providing visual feedback without exposing the key on-screen. It also correctly handles backspaces for editing.
+
+### **Version 1.0.12**
+
+This is a bugfix and reliability release focused on improving piped input and simplifying the main application logic.
+
+*   **Fixes:**
+    *   **Correct Ctrl+D Handling:** The `handle_attachment_from_stream` function was changed to use a low-level `read()` call instead of `fread()`. This fixes a critical bug where pressing `Ctrl+D` in an interactive terminal to signal the end of input was not being correctly detected due to stdio buffering.
+*   **Refactoring:**
+    *   **Simplified Mode Detection:** The logic in the `main` function for determining whether to run in interactive or non-interactive mode was simplified. It now uses a single boolean variable, `is_interactive`, making the code cleaner and the control flow easier to understand.
