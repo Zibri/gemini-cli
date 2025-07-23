@@ -1,3 +1,25 @@
+### **Version 2.0.0**
+
+This is a landmark release that introduces an unofficial, key-free API mode, making the tool accessible to everyone. It also adds significant features for robustness, scripting, and connectivity, alongside a major internal refactoring to improve code quality and maintainability.
+
+*   **Major Features:**
+    *   **Key-Free API Mode (`-f`, `--free`):** A new "free mode" has been added that uses an unofficial Google API endpoint. This allows users to chat with the model without needing an API key, making the tool instantly usable.
+    *   **Proxy Support (`-p`, `--proxy`):** The client can now route all API requests through a specified HTTP/HTTPS proxy, enabling usage in restricted network environments.
+    *   **Enhanced Scripting & Non-Interactive Mode:**
+        *   **Quiet Mode (`-q`, `--quiet`):** A new quiet flag suppresses all informational output to `stderr`, printing only the final model response to `stdout`.
+        *   **Execute Mode (`-e`, `--execute`):** A new execute flag forces a non-interactive run for a single prompt, even if `stdin` and `stdout` are connected to a terminal.
+    *   **Location & Map Fetching (`--loc`, `--map`):** New experimental flags (for use with `--free` mode) to fetch location information and a corresponding map URL.
+
+*   **Reliability & Robustness:**
+    *   **Automatic API Retries:** All API calls (for generating content, listing models, and counting tokens) now automatically retry up to 3 times upon receiving a `503 Service Unavailable` error. This makes the client significantly more resilient to transient server issues.
+    *   **Production-Ready Attachment Handling:** The `handle_attachment_from_stream` function was completely rewritten for production-level robustness. It now uses safer memory management, handles both regular files and piped streams (like `stdin`) more reliably, and includes a `goto`-based cleanup pattern to prevent resource leaks.
+    *   **Safer Path and Session Management:** Path construction logic has been hardened to pre-calculate buffer sizes, preventing potential overflows.
+
+*   **Refactoring & Code Quality:**
+    *   **Massive Code Documentation:** The entire codebase has been documented with Doxygen-style comments, explaining the purpose, parameters, and return values of nearly every function.
+    *   **Platform-Specific Logic:** Added system language detection and locale normalization for better cross-platform compatibility, which is used by the new free API mode.
+    *   **Unified Main Loop:** The main `generate_session` function was heavily refactored to accommodate the new free mode, scripting flags, and a more complex interactive command structure.
+
 ### **Initial Version (Pre-1.0.0)**
 
 This was the foundational version of the `gemini-cli` tool, establishing the core interactive chat functionality.
