@@ -6,8 +6,16 @@ It is written in C for maximum performance and portability, with no dependencies
 
 ## Features
 
+*   **Key-Free Mode:** Use the client without an API key via the `-f` flag. The client automatically falls back to this mode if no API key is provided, making it instantly usable.
 *   **Dual-Mode Operation:** Functions as both a fully featured **interactive chat client** and a non-interactive, **scriptable command-line tool**. The mode is automatically detected based on whether input is being piped to the program.
-*   **Scripting & Piping:** Pipe content directly to the program (`cat file | gemini-cli "summarize this"`) or provide prompts as arguments for seamless integration into shell scripts and automation.
+*   **Advanced Scripting & Piping:**
+    *   Pipe content directly (`cat file | gemini-cli "summarize this"`).
+    *   **Quiet Mode (`-q`):** Suppresses all informational output, printing only the final model response to `stdout`.
+    *   **Execute Mode (`-e`):** Forces a non-interactive run for a single prompt, even if not using pipes.
+    *   Save the history of a non-interactive run with `--save-session`.
+*   **Robust and Reliable:**
+    *   **Automatic Retries:** Automatically retries API requests up to 3 times on `503 Service Unavailable` errors.
+    *   **Proxy Support:** Route all API requests through a specified HTTP/S proxy with the `-p` flag.
 *   **Streaming Responses:** In interactive mode, see the model's response generated in real-time, just like in web UIs.
 *   **File Attachments:** Attach images, source code, PDFs, and other files to your prompts. Supports local files (`/attach`) and pasting directly from stdin (`/paste`).
 *   **Session Management:** Save, load, list, and delete entire conversation sessions, allowing you to easily switch between different projects and contexts. The current session name is always visible in the prompt.
@@ -22,7 +30,7 @@ It is written in C for maximum performance and portability, with no dependencies
     *   Load configurations from a custom path using the `-c` flag.
     *   Save the current session's settings to your configuration file with `/config save`.
 *   **Cross-Platform:** Designed to compile and run seamlessly on both POSIX systems (Linux, macOS) and Windows.
-*   **Efficient:** Uses Gzip compression for all API requests to reduce network latency and bandwidth.
+*   **Efficient:** Uses Gzip compression for all official API requests to reduce network latency and bandwidth.
 *   **Informative:** Get session statistics, including the total token count of your conversation context (including pending attachments), with the `/stats` command.
 *   **Model Exploration:** List all available models from the API with the `/models` command.
 *   **Advanced Generation Control:** Fine-tune the model's output with temperature, `topK`, `topP`, and other parameters, both at startup and interactively during a session.
@@ -31,7 +39,8 @@ It is written in C for maximum performance and portability, with no dependencies
 ## Getting Started
 
 ### 1. Clone the Repository
-First, get the source code using git:```bash
+First, get the source code using git:
+```bash
 git clone https://github.com/Zibri/gemini-cli.git
 cd gemini-cli
 ```
@@ -63,7 +72,8 @@ sudo dnf install gcc make curl-devel readline-devel zlib-devel
 **On macOS (using Homebrew):**
 ```bash
 brew install curl readline zlib
-# You may need to provide linker flags if they aren't found automatically```
+# You may need to provide linker flags if they aren't found automatically
+```
 
 **On Windows:**
 The easiest way to build on Windows is by using a POSIX-like environment such as [MSYS2](https://www.msys2.org/). Once you have MSYS2 installed, open the **UCRT64** terminal and install the necessary packages:
@@ -79,45 +89,54 @@ make
 ```
 This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
 
-### 4. Configure Your API Key
-You need to provide your Google Gemini API key. You can get one from [Google AI Studio](https://aistudio.google.com/app/apikey). The client will load settings in the following order of priority: **1. Environment Variable**, **2. Configuration File**, **3. Interactive Prompt**.
+### 4. Configuration
+There are two ways to use the client: with an API key (official API) or without one (unofficial API).
 
-1.  **Environment Variable (Highest Priority):**
-    Set the `GEMINI_API_KEY` environment variable.
+1.  **Key-Free Mode (Easiest Start):**
+    Simply run the client with the `-f` or `--free` flag. If no API key is found from other sources, the client will **automatically fall back** to this mode.
     ```bash
-    export GEMINI_API_KEY="your_api_key_here"
-    ```
-    **For Restricted Keys (Optional):**
-    If you have secured your API key to an HTTP referrer, set the `GEMINI_API_KEY_ORIGIN` environment variable. This sends the required `Origin` HTTP header.
-    ```bash
-    export GEMINI_API_KEY_ORIGIN="https://my-app.com"
+    ./gemini-cli -f "Hello, world!"
     ```
 
-2.  **Configuration File:**
-    The client will look for a `config.json` file. You can create this file to set a default model, temperature, API key, or system prompt.
+2.  **Using an API Key (Official API):**
+    To use the official Google Gemini API, you need to provide your API key. You can get one from [Google AI Studio](https://aistudio.google.com/app/apikey). The client loads the key in the following order of priority:
 
-    *   **POSIX:** `~/.config/gemini-cli/config.json`
-    *   **Windows:** `%APPDATA%\gemini-cli\config.json`
+    *   **Environment Variable (Highest Priority):**
+        Set the `GEMINI_API_KEY` environment variable.
+        ```bash
+        export GEMINI_API_KEY="your_api_key_here"
+        ```
+        **For Restricted Keys (Optional):**
+        If you have secured your API key to an HTTP referrer, set the `GEMINI_API_KEY_ORIGIN` environment variable. This sends the required `Origin` HTTP header.
+        ```bash
+        export GEMINI_API_KEY_ORIGIN="https://my-app.com"
+        ```
 
-    *Example `config.json`:*
-    ```json
-    {
-      "api_key": "your_api_key_here",
-      "origin": "https://your-allowed-origin.com",
-      "model": "gemini-2.5-flash",
-      "temperature": 0.75,
-      "seed": 42,
-      "system_prompt": "You are a helpful and concise assistant.",
-      "google_grounding": true,
-      "url_context": true,
-      "max_output_tokens": 8192,
-      "top_k": 40,
-      "top_p": 0.95
-    }
-    ```
+    *   **Configuration File:**
+        The client will look for a `config.json` file. You can create this file to set a default model, temperature, API key, or system prompt.
+        *   **POSIX:** `~/.config/gemini-cli/config.json`
+        *   **Windows:** `%APPDATA%\gemini-cli\config.json`
 
-3.  **Interactive Prompt (Lowest Priority):**
-    If no key is found, the program will securely prompt you to enter it when it first runs in interactive mode.
+        *Example `config.json`:*
+        ```json
+        {
+          "api_key": "your_api_key_here",
+          "origin": "https://your-allowed-origin.com",
+          "model": "gemini-2.5-pro",
+          "proxy": "http://localhost:8080",
+          "temperature": 0.75,
+          "seed": 42,
+          "system_prompt": "You are a helpful and concise assistant.",
+          "google_grounding": true,
+          "url_context": true,
+          "max_output_tokens": 8192,
+          "top_k": 40,
+          "top_p": 0.95
+        }
+        ```
+
+    *   **Interactive Prompt (Last Resort):**
+        If no key is found and you do not use the `-f` flag, the program will securely prompt you to enter it when it first runs in interactive mode.
 
 ## Usage
 
@@ -127,8 +146,12 @@ You can control the model and generation parameters at startup using these flags
 | Flag | Alias | Description | Example |
 |---|---|---|---|
 | `-h`, `--help` | | Show the help message and exit. | `./gemini-cli --help` |
+| `-f`, `--free` | | Use the unofficial, key-free API endpoint. | `./gemini-cli -f` |
+| `-e`, `--execute` | | Force non-interactive mode for a single prompt. | `gemini-cli -e "What is 2+2?"` |
+| `-q`, `--quiet` | | Suppress banners and info for clean scripting output. | `cat file | gemini-cli -q "summarize"` |
 | `-c`, `--config` | | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
-| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-2.5-pro` |
+| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro` |
+| `-p`, `--proxy` | | Use a proxy for API requests. | `./gemini-cli -p http://localhost:8080` |
 | `-t`, `--temp` | | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
 | `-s`, `--seed` | | Set the generation seed for reproducible outputs. | `./gemini-cli -s 1234` |
 | `-o`, `--max-tokens` | | Set the maximum number of tokens in the response. | `./gemini-cli -o 2048` |
@@ -137,30 +160,33 @@ You can control the model and generation parameters at startup using these flags
 | | `--topp` | Set the Top-P sampling parameter. | `./gemini-cli --topp 0.95` |
 | `-ng`, `--no-grounding` | | Disable Google Search grounding. | `./gemini-cli -ng` |
 | `-nu`, `--no-url-context`| | Disable URL context processing. | `./gemini-cli -nu` |
+| | `--loc`, `--map` | Get location/map info (requires `--free` mode). | `./gemini-cli -f --loc` |
+| | `--save-session` | Save conversation from a non-interactive run. | `cat f | gemini-cli "prompt" --save-session f.json` |
 
 ### Interactive Mode
 To start a conversation, simply run the executable. This is the default mode when not piping data. You can combine flags with an initial prompt and files to attach. The program will process these and then drop you into an interactive session:
 ```bash
-# Start a simple session
+# Start a simple session (will use free mode if no key is configured)
 ./gemini-cli
 
 # Start with a specific model and an initial prompt
 ./gemini-cli -m gemini-2.5-pro "Tell me about the C programming language."
 
 # Start with initial attachments and a prompt
-./gemini-cli my_image.png my_code.py "Describe the code and the image."```
+./gemini-cli my_image.png my_code.py "Describe the code and the image."
+```
 
 ### Non-Interactive / Scripting Mode
-Gemini-CLI automatically enters non-interactive mode if you pipe data to it.
+Gemini-CLI automatically enters non-interactive mode if you pipe data to it or use the `-e` flag.
 
 **Piping Content:**
 The piped content is treated as a text attachment, and any arguments are used as the prompt.
 ```bash
-# Summarize a source file
-cat my_complex_function.c | ./gemini-cli "Explain what this C code does in simple terms"
+# Summarize a source file, suppressing all non-essentials
+cat my_complex_function.c | ./gemini-cli -q "Explain what this C code does in simple terms"
 
 # Generate a git commit message from the staged changes
-git diff --staged | ./gemini-cli "Write a concise, imperative git commit message for these changes"
+git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes"
 ```
 
 ### Interactive Commands

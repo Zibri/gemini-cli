@@ -191,3 +191,24 @@ This release enhances security and refactors the credential input process for be
 *   **Refactoring:**
     *   **Modularized Secure Input:** A new `get_masked_input` helper function was created to handle all terminal-masked input. This abstracts the platform-specific (Windows/Unix) logic for disabling terminal echo.
     *   **Simplified Credential Logic:** The `get_api_key_securely` function was refactored to use the new `get_masked_input` helper, which reduces code duplication and makes the credential-gathering process cleaner and more secure.
+
+### **Version 2.0.0**
+
+This is a major feature and reliability release, introducing an unofficial "free" API mode, proxy support, automatic request retries, and a significant internal refactoring for improved robustness and maintainability.
+
+*   **Features:**
+    *   **Unofficial Free API Mode:**
+        *   A new `-f` or `--free` flag enables use of the client without an API key.
+        *   The client now automatically falls back to free mode if no API key is provided via config, environment, or prompt.
+        *   New `--loc` and `--map` flags can extract location information when in free mode.
+    *   **Proxy Support:** A new `-p` or `--proxy` command-line argument allows routing all API requests through a specified proxy.
+    *   **Enhanced Non-Interactive Mode:**
+        *   `-e, --execute`: Forces a single, non-interactive run, even if stdin/stdout are terminals.
+        *   `-q, --quiet`: Suppresses all `stderr` output (banners, info, errors) for clean scripting.
+        *   `--save-session <file>`: Saves the conversation history of a non-interactive run to a specified JSON file.
+*   **Improvements:**
+    *   **Network Reliability:** All API calls now automatically retry up to 3 times on an HTTP 503 "Service Unavailable" error, making the client more resilient to transient server issues.
+*   **Refactoring & Robustness:**
+    *   **Attachment Handling:** The `handle_attachment_from_stream` function has been completely rewritten. It now uses a safer `goto cleanup` pattern for resource management and correctly formats attachments as plain text for the new free mode, improving reliability for all file and pipe-based input.
+    *   **Main Function Structure:** The main `generate_session` function has been significantly reorganized with clear, commented sections, improving code readability and maintainability.
+    *   **System Integration:** The client now detects the system's language to send as part of the free mode API request.
