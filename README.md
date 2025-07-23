@@ -61,8 +61,7 @@ sudo apt-get install build-essential libcurl4-openssl-dev libreadline-dev zlib1g
 **On openSUSE/Tumbleweed:**
 ```bash
 sudo zypper refresh
-sudo zypper install gcc make libcurl-devel readline-devel zlib-devel
-```
+sudo zypper install gcc make libcurl-devel readline-devel zlib-devel```
 
 **On Fedora/CentOS/RHEL:**
 ```bash
@@ -122,7 +121,7 @@ There are two ways to use the client: with an API key (official API) or without 
         {
           "api_key": "your_api_key_here",
           "origin": "https://your-allowed-origin.com",
-          "model": "gemini-2.5-pro",
+          "model": "gemini-1.5-pro-latest",
           "proxy": "http://localhost:8080",
           "temperature": 0.75,
           "seed": 42,
@@ -145,23 +144,28 @@ You can control the model and generation parameters at startup using these flags
 
 | Flag | Alias | Description | Example |
 |---|---|---|---|
-| `-h`, `--help` | | Show the help message and exit. | `./gemini-cli --help` |
-| `-f`, `--free` | | Use the unofficial, key-free API endpoint. | `./gemini-cli -f` |
-| `-e`, `--execute` | | Force non-interactive mode for a single prompt. | `gemini-cli -e "What is 2+2?"` |
-| `-q`, `--quiet` | | Suppress banners and info for clean scripting output. | `cat file | gemini-cli -q "summarize"` |
-| `-c`, `--config` | | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
-| `-m`, `--model` | | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro` |
-| `-p`, `--proxy` | | Use a proxy for API requests. | `./gemini-cli -p http://localhost:8080` |
-| `-t`, `--temp` | | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
-| `-s`, `--seed` | | Set the generation seed for reproducible outputs. | `./gemini-cli -s 1234` |
-| `-o`, `--max-tokens` | | Set the maximum number of tokens in the response. | `./gemini-cli -o 2048` |
-| `-b`, `--budget` | | Set the model's max 'thinking' token budget. | `./gemini-cli -b 8192` |
-| | `--topk` | Set the Top-K sampling parameter. | `./gemini-cli --topk 40` |
-| | `--topp` | Set the Top-P sampling parameter. | `./gemini-cli --topp 0.95` |
-| `-ng`, `--no-grounding` | | Disable Google Search grounding. | `./gemini-cli -ng` |
-| `-nu`, `--no-url-context`| | Disable URL context processing. | `./gemini-cli -nu` |
-| | `--loc`, `--map` | Get location/map info (requires `--free` mode). | `./gemini-cli -f --loc` |
-| | `--save-session` | Save conversation from a non-interactive run. | `cat f | gemini-cli "prompt" --save-session f.json` |
+| `--help` | `-h` | Show the help message and exit. | `./gemini-cli --help` |
+| `--free` | `-f` | Use the unofficial, key-free API endpoint. | `./gemini-cli -f` |
+| `--execute` | `-e` | Force non-interactive mode for a single prompt. | `gemini-cli -e "What is 2+2?"` |
+| `--quiet` | `-q` | Suppress banners and info for clean scripting output. | `cat file.c \| ./gemini-cli -q "summarize"` |
+| `--config <path>` | `-c` | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
+| `--model <name>` | `-m` | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro-latest` |
+| `--proxy <url>` | `-p` | Use a proxy for API requests. | `./gemini-cli -p http://localhost:8080` |
+| `--system <prompt>` | `-S` | Set a system prompt for the entire session. | `./gemini-cli -S "You are a C code expert."` |
+| `--temp <float>` | `-t` | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
+| `--seed <int>` | `-s` | Set the generation seed for reproducible outputs. | `./gemini-cli -s 1234` |
+| `--max-tokens <int>` | `-o` | Set the maximum number of tokens in the response. | `./gemini-cli -o 2048` |
+| `--budget <int>` | `-b` | Set the model's max 'thinking' token budget. | `./gemini-cli -b 8192` |
+| `--topk <int>` | | Set the Top-K sampling parameter. | `./gemini-cli --topk 40` |
+| `--topp <float>` | | Set the Top-P sampling parameter. | `./gemini-cli --topp 0.95` |
+| `--no-grounding` | `-ng` | Disable Google Search grounding. | `./gemini-cli -ng` |
+| `--no-url-context` | `-nu` | Disable URL context processing. | `./gemini-cli -nu` |
+| `--list` | `-l` | List all available models and exit. | `./gemini-cli -l` |
+| `--list-sessions` | | List all saved sessions and exit. | `./gemini-cli --list-sessions` |
+| `--load-session <name>`| | Load a saved session by name. | `./gemini-cli --load-session my_chat` |
+| `--save-session <file>`| | Save conversation from a non-interactive run. | `cat f.c \| gemini-cli "prompt" --save-session f.json` |
+| `--loc` | | Get location information (requires `--free` mode). | `./gemini-cli -f --loc` |
+| `--map` | | Get map URL for location (requires `--free` mode). | `./gemini-cli -f --map` |
 
 ### Interactive Mode
 To start a conversation, simply run the executable. This is the default mode when not piping data. You can combine flags with an initial prompt and files to attach. The program will process these and then drop you into an interactive session:
@@ -170,7 +174,7 @@ To start a conversation, simply run the executable. This is the default mode whe
 ./gemini-cli
 
 # Start with a specific model and an initial prompt
-./gemini-cli -m gemini-2.5-pro "Tell me about the C programming language."
+./gemini-cli -m gemini-1.5-pro-latest "Tell me about the C programming language."
 
 # Start with initial attachments and a prompt
 ./gemini-cli my_image.png my_code.py "Describe the code and the image."
