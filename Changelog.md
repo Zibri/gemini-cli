@@ -1,3 +1,28 @@
+### **Version 2.0.1**
+
+This is a major feature release that introduces robust, multi-key management to the client. The tool can now store and rotate through multiple API keys, improving reliability and making it easier to manage rate limits.
+
+*   **Features:**
+    *   **Multi-Key Support:** The client can now manage an array of API keys and their corresponding origins.
+        *   **Automatic Key Rotation:** The client automatically cycles to the next available key for each API request, distributing usage.
+        *   **Configuration:** The `config.json` file now stores keys and origins in an array (`"api_keys": [...]`, `"origins": [...]`). The client maintains backward compatibility and will automatically read the old single-key format.
+    *   **Comprehensive Key Management:**
+        *   **Command-Line Flags:**
+            *   `--list-keys`: List all keys stored in the configuration file.
+            *   `--add-key`: Interactively prompts to add a new key and origin to the configuration.
+            *   `--remove-key <index>`: Removes a key from the configuration by its index.
+            *   `--check-keys`: Validates all configured keys by making a test API call with each one.
+        *   **Interactive Commands:**
+            *   `/keys list`: List the keys currently loaded for the session.
+            *   `/keys add <key>`: Add a new key for the current session (use `/config save` to make it permanent).
+            *   `/keys remove <index>`: Remove a key by its index for the current session.
+            *   `/keys check`: Validate all keys currently loaded in the session.
+*   **Improvements:**
+    *   **Smarter Error Handling:** If an API call fails with a `403 Unauthorized` error, the client now reports which specific key failed, making it easier to identify and remove invalid keys.
+*   **Refactoring:**
+    *   **Command-Line Parsing:** The entire command-line option parsing logic was refactored into a more robust and maintainable system using an `enum` and a `switch` statement, replacing a long series of `if-else` blocks.
+    *   **State Management:** The central `AppState` struct was updated to handle arrays of keys and origins instead of single static fields. All related functions for API requests, configuration, and cleanup were updated accordingly.
+
 ### **Version 2.0.0**
 
 This is a landmark release that introduces an unofficial, key-free API mode, making the tool accessible to everyone. It also adds significant features for robustness, scripting, and connectivity, alongside a major internal refactoring to improve code quality and maintainability.
@@ -191,24 +216,3 @@ This release enhances security and refactors the credential input process for be
 *   **Refactoring:**
     *   **Modularized Secure Input:** A new `get_masked_input` helper function was created to handle all terminal-masked input. This abstracts the platform-specific (Windows/Unix) logic for disabling terminal echo.
     *   **Simplified Credential Logic:** The `get_api_key_securely` function was refactored to use the new `get_masked_input` helper, which reduces code duplication and makes the credential-gathering process cleaner and more secure.
-
-### **Version 2.0.0**
-
-This is a major feature and reliability release, introducing an unofficial "free" API mode, proxy support, automatic request retries, and a significant internal refactoring for improved robustness and maintainability.
-
-*   **Features:**
-    *   **Unofficial Free API Mode:**
-        *   A new `-f` or `--free` flag enables use of the client without an API key.
-        *   The client now automatically falls back to free mode if no API key is provided via config, environment, or prompt.
-        *   New `--loc` and `--map` flags can extract location information when in free mode.
-    *   **Proxy Support:** A new `-p` or `--proxy` command-line argument allows routing all API requests through a specified proxy.
-    *   **Enhanced Non-Interactive Mode:**
-        *   `-e, --execute`: Forces a single, non-interactive run, even if stdin/stdout are terminals.
-        *   `-q, --quiet`: Suppresses all `stderr` output (banners, info, errors) for clean scripting.
-        *   `--save-session <file>`: Saves the conversation history of a non-interactive run to a specified JSON file.
-*   **Improvements:**
-    *   **Network Reliability:** All API calls now automatically retry up to 3 times on an HTTP 503 "Service Unavailable" error, making the client more resilient to transient server issues.
-*   **Refactoring & Robustness:**
-    *   **Attachment Handling:** The `handle_attachment_from_stream` function has been completely rewritten. It now uses a safer `goto cleanup` pattern for resource management and correctly formats attachments as plain text for the new free mode, improving reliability for all file and pipe-based input.
-    *   **Main Function Structure:** The main `generate_session` function has been significantly reorganized with clear, commented sections, improving code readability and maintainability.
-    *   **System Integration:** The client now detects the system's language to send as part of the free mode API request.

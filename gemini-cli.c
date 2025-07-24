@@ -71,6 +71,10 @@ typedef struct { char* buffer; size_t size; char* full_response; size_t full_res
 typedef struct AppState {
     char api_key[128];
     char origin[128];
+    char** api_keys;
+    char** origins;
+    int num_api_keys;
+    int next_key_index;
     char model_name[128];
     char proxy[256];
     float temperature;
@@ -418,14 +422,28 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     // The -f flag forces free mode, overriding any API keys.
     if (!state.free_mode) {
         if (key_from_env) {
-            strncpy(state.api_key, key_from_env, sizeof(state.api_key) - 1);
+            // If key is from env, it takes precedence and becomes the only key for this session
+            if (state.api_keys) { // Free any keys loaded from config
+                for (int i = 0; i < state.num_api_keys; i++) free(state.api_keys[i]);
+                free(state.api_keys);
+            }
+            if (state.origins) { // Free any keys loaded from config
+                for (int i = 0; i < state.num_api_keys; i++) free(state.origins[i]);
+                free(state.origins);
+            }
+            state.num_api_keys = 1;
+            state.api_keys = malloc(sizeof(char*));
+            state.api_keys[0] = strdup(key_from_env);
+            state.origins = malloc(sizeof(char*));
+            state.origins[0] = strdup(origin_from_env);
+            state.next_key_index = 0;
         }
 
         // If no key is found in config or environment, securely prompt the user.
-        if (state.api_key[0] == '\0') {
+        if (state.num_api_keys == 0) {
              if (interactive) get_api_key_securely(&state);
              // If still no key after prompting, fall back to free mode.
-             if (state.api_key[0] == '\0') {
+             if (state.num_api_keys == 0) {
                  state.free_mode = true;
              }
         }
@@ -607,6 +625,11 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                        "  /load <file.json>          - (Import) Load history from a specific file path.\n"
                        "  /export <file.md>          - Export the conversation to a Markdown file.\n"
                        "  /models                    - List all available models from the API.\n"
+                       "\nKey Management:\n"
+                       "  /keys [list]               - List the currently loaded API keys.\n"
+                       "  /keys add <key>            - Add a new API key for the current session.\n"
+                       "  /keys remove <index>       - Remove an API key by its index for the session.\n"
+                       "  /keys check                - Validate the currently loaded API keys.\n"
                        "\nHistory Management:\n"
                        "  /history attachments list    - List all file attachments in the conversation history.\n"
                        "  /history attachments remove <id> - Remove an attachment from history (e.g., 2:1).\n"
@@ -620,6 +643,94 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                        "  /session save <name>       - Save the current chat to a named session.\n"
                        "  /session load <name>       - Load a named session.\n"
                        "  /session delete <name>     - Delete a named session.\n");
+                } else if (strcmp(command_buffer, "/keys") == 0) {
+                    char sub_command[64] = {0};
+                    char arg_str[256] = {0}; // Buffer for key or index
+                    sscanf(arg_start, "%63s %255s", sub_command, arg_str);
+
+                    if (strcmp(sub_command, "list") == 0 || sub_command[0] == '\0') {
+                        fprintf(stderr, "--- API Keys ---\n");
+                        if (state.num_api_keys == 0) {
+                            fprintf(stderr, "  (No API keys are currently loaded)\n");
+                        } else {
+                            for (int i = 0; i < state.num_api_keys; i++) {
+                                const char* key = state.api_keys[i];
+                                const char* origin = state.origins[i];
+                                size_t key_len = strlen(key);
+                                fprintf(stderr, "  [%d] ", i);
+                                if (key_len > 11) { // Mask the key for security
+                                    fprintf(stderr, "%.4s...%.4s (%s)", key + 6, key + key_len - 4, origin);
+                                } else {
+                                    fprintf(stderr, "%.*s... (%s)", (int)key_len, key, origin);
+                                }
+                                if (i == state.next_key_index) {
+                                    fprintf(stderr, " (next)");
+                                }
+                                fprintf(stderr, "\n");
+                            }
+                        }
+                        fprintf(stderr, "----------------\n");
+                    } else if (strcmp(sub_command, "add") == 0) {
+                        if (arg_str[0] == '\0') {
+                            fprintf(stderr, "Usage: /keys add <api_key_string>\n");
+                        } else {
+                            char** new_keys = realloc(state.api_keys, sizeof(char*) * (state.num_api_keys + 1));
+                            if (!new_keys) {
+                                fprintf(stderr, "Error: Failed to allocate memory for new key.\n");
+                            } else {
+                                state.api_keys = new_keys;
+                                state.api_keys[state.num_api_keys] = strdup(arg_str);
+                                state.num_api_keys++;
+                                fprintf(stderr, "Added key (index %d). Use '/config save' to make it permanent.\n", state.num_api_keys - 1);
+                            }
+                        }
+                    } else if (strcmp(sub_command, "remove") == 0) {
+                        if (arg_str[0] == '\0') {
+                            fprintf(stderr, "Usage: /keys remove <index>\n");
+                        } else {
+                            long index = strtol(arg_str, NULL, 10);
+                            if (index < 0 || index >= state.num_api_keys) {
+                                fprintf(stderr, "Error: Invalid key index.\n");
+                            } else {
+                                free(state.api_keys[index]);
+                                if (index < state.num_api_keys - 1) {
+                                    memmove(&state.api_keys[index], &state.api_keys[index + 1], sizeof(char*) * (state.num_api_keys - index - 1));
+                                }
+                                state.num_api_keys--;
+                                // Adjust next_key_index if it's now out of bounds
+                                if (state.next_key_index >= state.num_api_keys && state.num_api_keys > 0) {
+                                    state.next_key_index = 0;
+                                }
+                                fprintf(stderr, "Removed key at index %ld. Use '/config save' to make it permanent.\n", index);
+                            }
+                        }
+                    } else if (strcmp(sub_command, "check") == 0) {
+                         fprintf(stderr, "Checking API keys...\n");
+                         if (state.num_api_keys == 0) {
+                            fprintf(stderr, "  (No keys to check)\n");
+                         } else {
+                            int original_next_index = state.next_key_index;
+                            for (int i = 0; i < state.num_api_keys; i++) {
+                                state.next_key_index = i; // Temporarily set the index to the key we want to test
+                                int token_count = get_token_count(&state);
+
+                                const char* key = state.api_keys[i];
+                                size_t key_len = strlen(key);
+                                fprintf(stderr, "  [%d] ", i);
+                                if (key_len > 11) fprintf(stderr, "%.4s...%.4s", key + 6, key + key_len - 4);
+                                else fprintf(stderr, "%.*s...", (int)key_len, key);
+
+                                if (token_count >= 0) {
+                                    fprintf(stderr, " : OK\n");
+                                } else {
+                                    fprintf(stderr, " : FAILED\n");
+                                }
+                            }
+                            state.next_key_index = original_next_index; // Restore the original index
+                         }
+                    } else {
+                        fprintf(stderr, "Unknown command for '/keys'. Use list, add, remove, or check.\n");
+                    }
                 } else if (strcmp(command_buffer, "/export") == 0) {
                     if (*arg_start == '\0') {
                         fprintf(stderr, "Usage: /export <filename.md>\n");
@@ -1132,6 +1243,19 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     
     // --- 8. Cleanup ---
     // Free all dynamically allocated memory before exiting.
+    if (state.api_keys) {
+        for (int i = 0; i < state.num_api_keys; i++) {
+            free(state.api_keys[i]);
+        }
+        free(state.api_keys);
+    }
+    if (state.origins) {
+        for (int i = 0; i < state.num_api_keys; i++) {
+            free(state.origins[i]);
+        }
+        free(state.origins);
+    }
+
     if(state.last_model_response) free(state.last_model_response);
     if(state.last_free_response_part) free(state.last_free_response_part);
     if(state.system_prompt) free(state.system_prompt);
@@ -1723,13 +1847,18 @@ void save_configuration(AppState* state) {
     if (state->proxy[0] != '\0') {
         cJSON_AddStringToObject(root, "proxy", state->proxy);
     }
-    // Only save the API key if it has been set.
-    if (state->api_key[0] != '\0') {
-        cJSON_AddStringToObject(root, "api_key", state->api_key);
+
+    if (state->num_api_keys > 0) {
+        cJSON* keys_array = cJSON_CreateStringArray((const char * const *)state->api_keys, state->num_api_keys);
+        cJSON_AddItemToObject(root, "api_keys", keys_array);
+        cJSON_AddNumberToObject(root, "next_key_index", state->next_key_index);
     }
-    if (state->origin[0] != '\0') {
-        cJSON_AddStringToObject(root, "origin", state->origin);
+
+    if (state->num_api_keys > 0) {
+        cJSON* origins_array = cJSON_CreateStringArray((const char * const *)state->origins, state->num_api_keys);
+        cJSON_AddItemToObject(root, "origins", origins_array);
     }
+    
     cJSON_AddNumberToObject(root, "max_output_tokens", state->max_output_tokens);
     cJSON_AddNumberToObject(root, "thinking_budget", state->thinking_budget);
     cJSON_AddBoolToObject(root, "google_grounding", state->google_grounding);
@@ -1786,17 +1915,25 @@ long perform_api_get_request(const char* url, AppState* state, size_t (*callback
         return -CURLE_FAILED_INIT;
     }
 
+    if (state->num_api_keys == 0) {
+        fprintf(stderr, "Error: No API key provided.\n");
+        return -1;
+    }
+    const char* current_key = state->api_keys[state->next_key_index];
+    const char* current_origin = state->origins[state->next_key_index];
+    state->next_key_index = (state->next_key_index + 1) % state->num_api_keys;
+    
     // Prepare the required HTTP headers for authentication.
     char auth_header[256];
-    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
+    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", current_key);
 
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, auth_header);
 
     // The 'Origin' header is optional and only added if not using the default.
-    if (strcmp(state->origin, "default") != 0) {
+    if (strcmp(current_origin, "default") != 0) {
         char origin_header[256];
-        snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
+        snprintf(origin_header, sizeof(origin_header), "Origin: %s", current_origin);
         headers = curl_slist_append(headers, origin_header);
     }
 
@@ -1823,7 +1960,7 @@ long perform_api_get_request(const char* url, AppState* state, size_t (*callback
     // Clean up allocated resources.
     curl_easy_cleanup(curl);
     curl_slist_free_all(headers);
-
+    
     return http_code;
 }
 
@@ -2202,6 +2339,13 @@ bool send_api_request(AppState* state, char** full_response_out) {
     // 6. Handle the final result after the loop is finished.
     if (success) {
         *full_response_out = chunk.full_response;
+    } else if (http_code == 403) {
+        size_t last_index = (state->next_key_index + state->num_api_keys - 1) % state->num_api_keys;
+    	  char *current_key = state->api_keys[last_index];
+    	  char *current_origin = state->origins[last_index];
+    	  size_t key_len = strlen(current_key);
+        fprintf(stderr, "\nAPI returned 403 (Unauthorized) for key: %.4s...%.4s (%s)\n", current_key + 6, current_key + key_len - 4, current_origin);
+        return false;
     } else {
         fprintf(stderr, "\nAPI call failed after retries (Last HTTP code: %ld)\n", http_code);
         if(http_code < 0) fprintf(stderr, "Curl error: %s\n", curl_easy_strerror(-http_code));
@@ -2309,91 +2453,307 @@ static void json_read_strdup(const cJSON* obj, const char* key, char** target) {
  *         allows the main session logic to process the remaining arguments as
  *         part of the initial prompt or as file attachments.
  */
-int parse_common_options(int argc, char* argv[], AppState* state) {
-    int i;
-    for (i = 1; i < argc; i++) {
-        // --- Model and Configuration ---
-        if ((STRCASECMP(argv[i], "-m") == 0 || STRCASECMP(argv[i], "--model") == 0) && (i + 1 < argc)) {
-            strncpy(state->model_name, argv[i + 1], sizeof(state->model_name) - 1);
-            i++; // Consume the flag's value
-        } else if ((STRCASECMP(argv[i], "-S") == 0 || STRCASECMP(argv[i], "--system") == 0) && (i + 1 < argc)) {
-            if (state->system_prompt) {
-                free(state->system_prompt); // Free any existing prompt
+
+/*
+  Enum of all recognized options
+*/
+typedef enum {
+    OPT_UNKNOWN,
+    OPT_MODEL, OPT_SYSTEM, OPT_CONFIG,
+    OPT_TEMP, OPT_PROXY, OPT_SEED, OPT_MAX_TOKENS,
+    OPT_TOPK, OPT_TOPP, OPT_BUDGET,
+    OPT_EXECUTE, OPT_QUIET, OPT_NO_GROUNDING, OPT_FREE, OPT_NO_URL_CONTEXT,
+    OPT_LOC, OPT_MAP,
+    OPT_LIST_KEYS, OPT_ADD_KEY, OPT_REMOVE_KEY, OPT_CHECK_KEYS,
+    OPT_LIST_MODELS, OPT_LIST_SESSIONS, OPT_SAVE_SESSION, OPT_LOAD_SESSION,
+    OPT_HELP
+} OptionType;
+
+/*
+  Map a flag string to its OptionType
+*/
+static OptionType classify_option(const char *arg) {
+    if (!STRCASECMP(arg, "-m")          || !STRCASECMP(arg, "--model"))          return OPT_MODEL;
+    if (!STRCASECMP(arg, "-S")          || !STRCASECMP(arg, "--system"))         return OPT_SYSTEM;
+    if (!STRCASECMP(arg, "-c")          || !STRCASECMP(arg, "--config"))         return OPT_CONFIG;
+    if (!STRCASECMP(arg, "-t")          || !STRCASECMP(arg, "--temp"))           return OPT_TEMP;
+    if (!STRCASECMP(arg, "-p")          || !STRCASECMP(arg, "--proxy"))          return OPT_PROXY;
+    if (!STRCASECMP(arg, "-s")          || !STRCASECMP(arg, "--seed"))           return OPT_SEED;
+    if (!STRCASECMP(arg, "-o")          || !STRCASECMP(arg, "--max-tokens"))     return OPT_MAX_TOKENS;
+    if (!STRCASECMP(arg, "--topk"))                                              return OPT_TOPK;
+    if (!STRCASECMP(arg, "--topp"))                                              return OPT_TOPP;
+    if (!STRCASECMP(arg, "-b")          || !STRCASECMP(arg, "--budget"))         return OPT_BUDGET;
+    if (!STRCASECMP(arg, "-e")          || !STRCASECMP(arg, "--execute"))        return OPT_EXECUTE;
+    if (!STRCASECMP(arg, "-q")          || !STRCASECMP(arg, "--quiet"))          return OPT_QUIET;
+    if (!STRCASECMP(arg, "-ng")         || !STRCASECMP(arg, "--no-grounding"))   return OPT_NO_GROUNDING;
+    if (!STRCASECMP(arg, "-f")          || !STRCASECMP(arg, "--free"))           return OPT_FREE;
+    if (!STRCASECMP(arg, "-nu")         || !STRCASECMP(arg, "--no-url-context")) return OPT_NO_URL_CONTEXT;
+    if (!STRCASECMP(arg, "--loc"))                                               return OPT_LOC;
+    if (!STRCASECMP(arg, "--map"))                                               return OPT_MAP;
+    if (!STRCASECMP(arg, "--list-keys"))                                         return OPT_LIST_KEYS;
+    if (!STRCASECMP(arg, "--add-key"))                                           return OPT_ADD_KEY;
+    if (!STRCASECMP(arg, "--remove-key"))                                        return OPT_REMOVE_KEY;
+    if (!STRCASECMP(arg, "--check-keys"))                                        return OPT_CHECK_KEYS;
+    if (!STRCASECMP(arg, "-l")          || !STRCASECMP(arg, "--list"))           return OPT_LIST_MODELS;
+    if (!STRCASECMP(arg, "--list-sessions"))                                     return OPT_LIST_SESSIONS;
+    if (!STRCASECMP(arg, "--save-session"))                                      return OPT_SAVE_SESSION;
+    if (!STRCASECMP(arg, "--load-session"))                                      return OPT_LOAD_SESSION;
+    if (!STRCASECMP(arg, "-h")          || !STRCASECMP(arg, "--help"))           return OPT_HELP;
+    return OPT_UNKNOWN;
+}
+
+int parse_common_options(int argc, char *argv[], AppState *state) {
+    for (int i = 1; i < argc; i++) {
+        const char   *arg      = argv[i];
+        const char   *next_arg = (i + 1 < argc ? argv[i + 1] : NULL);
+        OptionType    opt      = classify_option(arg);
+
+        switch (opt) {
+
+            // --- Model and Configuration ---
+            case OPT_MODEL:
+                if (next_arg) {
+                    strncpy(state->model_name,
+                            next_arg,
+                            sizeof(state->model_name) - 1);
+                    i++;
+                }
+                break;
+
+            case OPT_SYSTEM:
+                if (next_arg) {
+                    free(state->system_prompt);
+                    state->system_prompt = strdup(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_CONFIG:
+                if (next_arg) {
+                    // config already loaded; just skip its value
+                    i++;
+                }
+                break;
+
+
+            // --- Generation Parameters ---
+            case OPT_TEMP:
+                if (next_arg) {
+                    state->temperature = atof(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_PROXY:
+                if (next_arg) {
+                    snprintf(state->proxy,
+                             sizeof(state->proxy),
+                             "%s",
+                             next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_SEED:
+                if (next_arg) {
+                    state->seed = atoi(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_MAX_TOKENS:
+                if (next_arg) {
+                    state->max_output_tokens = atoi(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_TOPK:
+                if (next_arg) {
+                    state->topK = atoi(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_TOPP:
+                if (next_arg) {
+                    state->topP = atof(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_BUDGET:
+                if (next_arg) {
+                    state->thinking_budget = atoi(next_arg);
+                    i++;
+                }
+                break;
+
+
+            // --- Boolean Flags ---
+            case OPT_EXECUTE:
+            case OPT_QUIET:
+                // handled elsewhere, just consume
+                break;
+
+            case OPT_NO_GROUNDING:
+                state->google_grounding = false;
+                break;
+
+            case OPT_FREE:
+                state->free_mode = true;
+                break;
+
+            case OPT_NO_URL_CONTEXT:
+                state->url_context = false;
+                break;
+
+            case OPT_LOC:
+                state->loc_tile |= 1;
+                break;
+
+            case OPT_MAP:
+                state->loc_tile |= 2;
+                break;
+
+
+            // --- Immediate Actions (exit) ---
+            case OPT_LIST_KEYS: {
+                fprintf(stdout, "--- API Keys in Config ---\n");
+                if (state->num_api_keys == 0) {
+                    fprintf(stdout, "  (No API keys found in configuration)\n");
+                } else {
+                    for (int j = 0; j < state->num_api_keys; j++) {
+                        const char *key    = state->api_keys[j];
+                        const char *origin = state->origins[j];
+                        size_t key_len     = strlen(key);
+                        fprintf(stdout, "  [%d] ", j);
+                        if (key_len > 11)
+                            fprintf(stdout,
+                                    "%.4s...%.4s (%s)",
+                                    key + 6,
+                                    key + key_len - 4,
+                                    origin);
+                        else
+                            fprintf(stdout,
+                                    "%.*s... (%s)",
+                                    (int)key_len,
+                                    key,
+                                    origin);
+                        fprintf(stdout, "\n");
+                    }
+                }
+                exit(0);
             }
-            state->system_prompt = strdup(argv[i + 1]);
-            i++; // Important: consume the argument's value
-        } else if ((STRCASECMP(argv[i], "-c") == 0 || STRCASECMP(argv[i], "--config") == 0) && (i + 1 < argc)) {
-            // The config file is loaded before options are parsed, so we just skip the argument and its value.
-            i++;
-        }
-        // --- Generation Parameters ---
-        else if ((STRCASECMP(argv[i], "-t") == 0 || STRCASECMP(argv[i], "--temp") == 0) && (i + 1 < argc)) {
-            state->temperature = atof(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-p") == 0 || STRCASECMP(argv[i], "--proxy") == 0) && (i + 1 < argc)) {
-            snprintf(state->proxy, sizeof(state->proxy), "%s", argv[i + 1]);
-            i++; // Consume the flag's value
-        } else if ((STRCASECMP(argv[i], "-s") == 0 || STRCASECMP(argv[i], "--seed") == 0) && (i + 1 < argc)) {
-            state->seed = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-o") == 0 || STRCASECMP(argv[i], "--max-tokens") == 0) && (i + 1 < argc)) {
-            state->max_output_tokens = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "--topk") == 0) && (i + 1 < argc)) {
-            state->topK = atoi(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "--topp") == 0) && (i + 1 < argc)) {
-            state->topP = atof(argv[i + 1]);
-            i++;
-        } else if ((STRCASECMP(argv[i], "-b") == 0 || STRCASECMP(argv[i], "--budget") == 0) && (i + 1 < argc)) {
-            state->thinking_budget = atoi(argv[i + 1]);
-            i++;
-        }
-        // --- Boolean Flags ---
-        else if (STRCASECMP(argv[i], "-e") == 0 || STRCASECMP(argv[i], "--execute") == 0) {
-            // Do nothing. This is handled in main().
-            // This block just ensures the flag is recognized and consumed.
-        } else if (STRCASECMP(argv[i], "-q") == 0 || STRCASECMP(argv[i], "--quiet") == 0) {
-            // Handled in main(), just consume the flag.
-        } else if (STRCASECMP(argv[i], "-ng") == 0 || STRCASECMP(argv[i], "--no-grounding") == 0) {
-            state->google_grounding = false;
-        } else if (STRCASECMP(argv[i], "-f") == 0 || STRCASECMP(argv[i], "--free") == 0) {
-            state->free_mode = true;
-        } else if (STRCASECMP(argv[i], "-nu") == 0 || STRCASECMP(argv[i], "--no-url-context") == 0) {
-            state->url_context = false;
-        } else if (STRCASECMP(argv[i], "--loc") == 0) {
-            state->loc_tile =  state->loc_tile | 1;
-        } else if (STRCASECMP(argv[i], "--map") == 0) {
-            state->loc_tile =  state->loc_tile | 2;
-        }
-        // --- Action Flags (exit after running) ---
-        else if ((STRCASECMP(argv[i], "-l") == 0 || STRCASECMP(argv[i], "--list") == 0)) {
-            list_available_models(state);
-            exit(0);
-        } else if (STRCASECMP(argv[i], "--list-sessions") == 0) {
-            list_sessions();
-            exit(0);
-        } else if ((STRCASECMP(argv[i], "--save-session") == 0) && (i + 1 < argc)) { // <-- ADD THIS BLOCK
-            if (state->save_session_path) free(state->save_session_path);
-            state->save_session_path = strdup(argv[i + 1]);
-            i++;
-        } else if (STRCASECMP(argv[i], "--load-session") == 0 && (i + 1 < argc)) {
-            char file_path[PATH_MAX];
-            if (build_session_path(argv[i + 1], file_path, sizeof(file_path))) {
-                load_history_from_file(state, file_path);
-                strncpy(state->current_session_name, argv[i + 1], sizeof(state->current_session_name) - 1);
+
+            case OPT_ADD_KEY:
+                get_api_key_securely(state);
+                save_configuration(state);
+                exit(0);
+
+            case OPT_REMOVE_KEY:
+                if (next_arg) {
+                    long idx = strtol(next_arg, NULL, 10);
+                    if (idx < 0 || idx >= state->num_api_keys) {
+                        fprintf(stderr, "Error: Invalid key index.\n");
+                    } else {
+                        free(state->api_keys[idx]);
+                        if (idx < state->num_api_keys - 1) {
+                            memmove(&state->api_keys[idx],
+                                    &state->api_keys[idx + 1],
+                                    sizeof(char*) *
+                                      (state->num_api_keys - idx - 1));
+                        }
+                        state->num_api_keys--;
+                        if (state->next_key_index >= state->num_api_keys &&
+                            state->num_api_keys > 0) {
+                            state->next_key_index = 0;
+                        }
+                        save_configuration(state);
+                        fprintf(stdout,
+                                "Removed key at index %ld from configuration.\n",
+                                idx);
+                    }
+                    i++;
+                }
+                exit(0);
+
+            case OPT_CHECK_KEYS: {
+                fprintf(stdout, "Checking API keys from configuration...\n");
+                if (state->num_api_keys == 0) {
+                    fprintf(stdout, "  (No keys to check)\n");
+                } else {
+                    int original_next = state->next_key_index;
+                    for (int j = 0; j < state->num_api_keys; j++) {
+                        state->next_key_index = j;
+                        int token_count       = get_token_count(state);
+                        const char *key       = state->api_keys[j];
+                        size_t key_len        = strlen(key);
+                        fprintf(stdout, "  [%d] ", j);
+                        if (key_len > 11)
+                            fprintf(stdout,
+                                    "%.4s...%.4s",
+                                    key + 6,
+                                    key + key_len - 4);
+                        else
+                            fprintf(stdout,
+                                    "%.*s...",
+                                    (int)key_len,
+                                    key);
+                        if (token_count >= 0)
+                            fprintf(stdout, " : OK\n");
+                        else
+                            fprintf(stdout, " : FAILED\n");
+                    }
+                    state->next_key_index = original_next;
+                }
+                exit(0);
             }
-            i++;
-        } else if ((STRCASECMP(argv[i], "-h") == 0 || STRCASECMP(argv[i], "--help") == 0)) {
-            print_usage(argv[0]);
-            exit(0);
-        } else {
-            // This is not a recognized option, so we stop parsing and return its index.
-            return i;
+
+            case OPT_LIST_MODELS:
+                list_available_models(state);
+                exit(0);
+
+            case OPT_LIST_SESSIONS:
+                list_sessions();
+                exit(0);
+
+            case OPT_SAVE_SESSION:
+                if (next_arg) {
+                    free(state->save_session_path);
+                    state->save_session_path = strdup(next_arg);
+                    i++;
+                }
+                break;
+
+            case OPT_LOAD_SESSION:
+                if (next_arg) {
+                    char file_path[PATH_MAX];
+                    if (build_session_path(next_arg,
+                                            file_path,
+                                            sizeof(file_path))) {
+                        load_history_from_file(state, file_path);
+                        strncpy(state->current_session_name,
+                                next_arg,
+                                sizeof(state->current_session_name) - 1);
+                    }
+                    i++;
+                }
+                break;
+
+            case OPT_HELP:
+                print_usage(argv[0]);
+                exit(0);
+
+            case OPT_UNKNOWN:
+            default:
+                // first non-option → return its index
+                return i;
         }
     }
-    // All arguments were processed as options.
-    return i;
+
+    // all args parsed as options
+    return argc;
 }
 
 /**
@@ -2432,6 +2792,11 @@ void print_usage(const char* prog_name) {
     fprintf(stderr, "      --list-sessions       List all saved sessions and exit.\n");
     fprintf(stderr, "      --load-session <name> Load a saved session by name and start chatting.\n");
     fprintf(stderr, "      --save-session <file> Save the conversation to a file after a non-interactive run.\n");
+    fprintf(stderr, "\nKey Management:\n");
+    fprintf(stderr, "      --list-keys           List API keys from the configuration file and exit.\n");
+    fprintf(stderr, "      --add-key <key>       Add a new API key to the configuration file and exit.\n");
+    fprintf(stderr, "      --remove-key <index>  Remove an API key from the configuration file and exit.\n");
+    fprintf(stderr, "      --check-keys          Validate all configured API keys and exit.\n\n");
     fprintf(stderr, "  -h, --help                Show this help message and exit.\n\n");
     fprintf(stderr, "For a list of in-session commands (like /save, /attach), start interactive mode and type /help.\n");
 }
@@ -2477,6 +2842,12 @@ void initialize_default_state(AppState* state) {
     state->current_session_name[sizeof(state->current_session_name) - 1] = '\0';
     state->origin[sizeof(state->origin) - 1] = '\0';
 
+    state->api_keys = NULL;
+    state->origins = NULL;
+    
+    state->num_api_keys = 0;
+    state->next_key_index = 0;
+    
     // Ensure pointers are initialized to NULL.
     state->last_free_response_part = NULL;
     state->last_model_response = NULL;
@@ -2761,8 +3132,49 @@ void load_configuration_from_path(AppState* state, const char* filepath) {
     json_read_int(root, "seed", &state->seed);
     json_read_strdup(root, "system_prompt", &state->system_prompt);
     json_read_string(root, "proxy", state->proxy, sizeof(state->proxy));
-    json_read_string(root, "api_key", state->api_key, sizeof(state->api_key));
-    json_read_string(root, "origin", state->origin, sizeof(state->origin));
+
+    json_read_int(root, "next_key_index", &state->next_key_index);
+
+    const cJSON* keys_array = cJSON_GetObjectItem(root, "api_keys");
+    const cJSON* origins_array = cJSON_GetObjectItem(root, "origins");
+    if (cJSON_IsArray(keys_array)) {
+        // New format: "api_keys": ["key1", "key2"]
+        state->num_api_keys = cJSON_GetArraySize(keys_array);
+        state->api_keys = malloc(sizeof(char*) * state->num_api_keys);
+        state->origins = malloc(sizeof(char*) * state->num_api_keys);
+        cJSON* key_item;
+        cJSON* origin_item;
+        int i = 0;
+        cJSON_ArrayForEach(key_item, keys_array) {
+            if (cJSON_IsString(key_item)) {
+                state->api_keys[i++] = strdup(key_item->valuestring);
+            }
+        }
+        i = 0;
+        cJSON_ArrayForEach(origin_item, origins_array) {
+            if (cJSON_IsString(origin_item)) {
+                state->origins[i++] = strdup(origin_item->valuestring);
+            }
+        }
+    } else {
+        // Backward compatibility: "api_key": "key1"
+        const cJSON* single_key = cJSON_GetObjectItem(root, "api_key");
+        const cJSON* single_origin = cJSON_GetObjectItem(root, "origin");
+        if (cJSON_IsString(single_key)) {
+            state->num_api_keys = 1;
+            state->api_keys = malloc(sizeof(char*));
+            state->api_keys[0] = strdup(single_key->valuestring);
+            state->origins = malloc(sizeof(char*));
+            state->origins[0] = strdup(single_origin->valuestring);
+        }
+    }
+    
+    // Ensure index is not out of bounds
+    if (state->num_api_keys > 0 && state->next_key_index >= state->num_api_keys) {
+        state->next_key_index = 0;
+    }
+    
+    //json_read_string(root, "origin", state->origin, sizeof(state->origin));
     json_read_int(root, "max_output_tokens", &state->max_output_tokens);
     json_read_int(root, "thinking_budget", &state->thinking_budget);
     json_read_bool(root, "google_grounding", &state->google_grounding);
@@ -2881,23 +3293,42 @@ void get_masked_input(const char* prompt, char* buffer, size_t buffer_size) {
  *              stored.
  */
 void get_api_key_securely(AppState* state) {
-    // First, always prompt for the API key using the secure, masked input function.
-    get_masked_input("Enter your API Key: ", state->api_key, sizeof(state->api_key));
+    char key_buffer[128];
+    get_masked_input("Enter your API Key: ", key_buffer, sizeof(key_buffer));
 
-    // Only prompt for the Origin if it hasn't already been set by a config file
-    // or environment variable.
-    if (strcmp(state->origin, "default") == 0) {
-        char origin_input_buffer[128];
-        get_masked_input("Enter your Origin (press Enter for 'default'): ", origin_input_buffer, sizeof(origin_input_buffer));
-
-        // If the user entered text for the origin, update the state.
-        // If they just pressed Enter, the buffer will be empty, and the state's
-        // origin will correctly remain "default".
-        if (origin_input_buffer[0] != '\0') {
-            strncpy(state->origin, origin_input_buffer, sizeof(state->origin) - 1);
-            state->origin[sizeof(state->origin) - 1] = '\0'; // Ensure null-termination.
-        }
+    // If no API key entered, do nothing
+    if (key_buffer[0] == '\0') {
+        return;
     }
+
+    // 1) Append new API key
+    state->num_api_keys += 1;
+    state->api_keys = realloc(
+        state->api_keys,
+        state->num_api_keys * sizeof *state->api_keys
+    );
+    state->api_keys[state->num_api_keys - 1] = strdup(key_buffer);
+
+    // 2) Prompt for origin (Enter → "default")
+    char origin_buffer[128];
+    get_masked_input(
+      "Enter your Origin (press Enter for 'default'): ",
+      origin_buffer,
+      sizeof(origin_buffer)
+    );
+
+    // 3) Append origin in lock-step with api_keys count
+    state->origins = realloc(
+        state->origins,
+        state->num_api_keys * sizeof *state->origins
+    );
+
+    if (origin_buffer[0] == '\0') {
+        state->origins[state->num_api_keys - 1] = strdup("default");
+    } else {
+        state->origins[state->num_api_keys - 1] = strdup(origin_buffer);
+    }
+    
 }
 
 
@@ -3787,13 +4218,22 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
         return -CURLE_FAILED_INIT;
     }
 
+    if (state->num_api_keys == 0) {
+        fprintf(stderr, "Error: No API key provided.\n");
+        return -1;
+    }
+
+    const char* current_key = state->api_keys[state->next_key_index];
+    const char* current_origin = state->origins[state->next_key_index];
+    state->next_key_index = (state->next_key_index + 1) % state->num_api_keys;
+    
     // Construct the full API URL from the model name and endpoint.
     char full_api_url[256];
     snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, endpoint);
 
     // Prepare the authentication and origin headers.
     char auth_header[256];
-    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", state->api_key);
+    snprintf(auth_header, sizeof(auth_header), "x-goog-api-key: %s", current_key);
 
     struct curl_slist* headers = NULL;
     headers = curl_slist_append(headers, "Content-Type: application/json");
@@ -3801,9 +4241,9 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
     headers = curl_slist_append(headers, auth_header);
 
     // The 'Origin' header is optional.
-    if (strcmp(state->origin, "default") != 0) {
+    if (strcmp(state->origins[state->next_key_index], "default") != 0) {
         char origin_header[256];
-        snprintf(origin_header, sizeof(origin_header), "Origin: %s", state->origin);
+        snprintf(origin_header, sizeof(origin_header), "Origin: %s", current_origin);
         headers = curl_slist_append(headers, origin_header);
     }
 
