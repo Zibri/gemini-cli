@@ -20,6 +20,8 @@ OS_TYPE = POSIX
 # The 'OS' environment variable is 'Windows_NT' on Windows systems.
 ifeq ($(OS),Windows_NT)
 	OS_TYPE = WINDOWS
+else
+	UNAME_S := $(shell uname -s)
 endif
 
 # --- Windows Build ---
@@ -40,7 +42,11 @@ else
 	# On POSIX, we link against the installed readline library
 	LIBS = -lcurl -lz -lreadline
 	RM = rm -f
-	STRIP = strip -s
+	ifeq ($(UNAME_S),Darwin)
+		STRIP = strip
+	else
+		STRIP = strip -s
+	endif
 endif
 
 OBJ = $(SRC:.c=.o)
