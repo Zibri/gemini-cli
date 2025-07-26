@@ -326,6 +326,14 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     // Process all remaining arguments. They can be file paths to attach,
     // .json history files to load, or plain text to form an initial prompt.
     for (int i = first_arg_index; i < argc; i++) {
+
+        if (strcmp(argv[i], "-") == 0) {
+            // Treat stdin as the file stream to be attached.
+            handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
+            // Skip the rest of the loop and move to the next argument.
+            continue;
+        }
+        
         // Load conversation history from a .json file.
         if (strlen(argv[i]) > 5 && strcmp(argv[i] + strlen(argv[i]) - 5, ".json") == 0) {
             load_history_from_file(&state, argv[i]);
@@ -3974,7 +3982,6 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
     }
 
     // --- 2. Resource Acquisition ---
-    // If no stream was provided, open the file specified by the filepath.
     if (input_stream == NULL) {
         if (!is_path_safe(filepath)) {
             fprintf(stderr, "Error: Unsafe or absolute file path specified: %s\n", filepath);
@@ -3985,7 +3992,7 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
             perror("Error opening file");
             return;
         }
-        opened_here = true; // Mark that we are responsible for closing this file.
+        opened_here = true;
     }
 
     // --- 3. Read Stream into Buffer ---
@@ -3993,10 +4000,10 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
     struct stat st;
     if (fstat(fd, &st) != 0) {
         perror("Error getting file status");
-        goto cleanup; // Go to cleanup to close the file if we opened it.
+        goto cleanup;
     }
 
-    // Strategy 1: For regular, seekable files.
+    // Check if the stream is a regular file
     if (S_ISREG(st.st_mode)) {
         fseek(input_stream, 0, SEEK_END);
         long file_size = ftell(input_stream);
@@ -4006,7 +4013,7 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
             fprintf(stderr, "Warning: File '%s' is empty or invalid. Attachment skipped.\n", filepath);
             goto cleanup;
         }
-        buffer = malloc(file_size + 1); // +1 for null terminator.
+        buffer = malloc(file_size + 1);
         if (!buffer) {
             fprintf(stderr, "Error: Failed to allocate memory for file buffer.\n");
             goto cleanup;
@@ -4016,47 +4023,72 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
             fprintf(stderr, "Error reading from file '%s'.\n", filepath);
             goto cleanup;
         }
-    }
-    // Strategy 2: For non-seekable streams (like stdin pipes).
-    else {
+    } else { // Stream is not a regular file (it's a pipe or the console)
         size_t capacity = 4096;
         buffer = malloc(capacity);
         if (!buffer) {
-            fprintf(stderr, "Error: Failed to allocate memory for pipe buffer.\n");
+            fprintf(stderr, "Error: Failed to allocate memory for stream buffer.\n");
             goto cleanup;
         }
-        ssize_t bytes_read;
-        while ((bytes_read = read(fd, buffer + total_read, 1024)) > 0) {
-            total_read += (size_t)bytes_read;
-            if (capacity - total_read < 1024) {
-                capacity *= 2;
-                unsigned char* new_buffer = realloc(buffer, capacity);
-                if (!new_buffer) {
-                    fprintf(stderr, "Error: Failed to reallocate pipe buffer.\n");
+
+        #ifdef _WIN32
+            // On Windows, check if stdin is an interactive console (a TTY)
+            if (_isatty(fd) && input_stream == stdin) {
+                fprintf(stderr, "Reading from stdin. Press Ctrl+D or Ctrl+Z, Enter when done.\n");
+                int c;
+                // Read character by character to manually check for Ctrl+D
+                while ((c = fgetc(input_stream)) != EOF) {
+                    if (c == 4) { // ASCII for Ctrl+D is 4
+                        break; // Exit loop on Ctrl+D
+                    }
+                    if (total_read >= capacity - 1) {
+                        capacity *= 2;
+                        unsigned char* new_buffer = realloc(buffer, capacity);
+                        if (!new_buffer) {
+                            fprintf(stderr, "Error: Failed to reallocate stream buffer.\n");
+                            goto cleanup;
+                        }
+                        buffer = new_buffer;
+                    }
+                    buffer[total_read++] = (unsigned char)c;
+                }
+            } else {
+        #endif
+                // On POSIX, or for a non-interactive pipe on Windows,
+                // the existing block-read logic is safe and efficient.
+                ssize_t bytes_read;
+                while ((bytes_read = read(fd, buffer + total_read, 1024)) > 0) {
+                    total_read += (size_t)bytes_read;
+                    if (capacity - total_read < 1024) {
+                        capacity *= 2;
+                        unsigned char* new_buffer = realloc(buffer, capacity);
+                        if (!new_buffer) {
+                            fprintf(stderr, "Error: Failed to reallocate pipe buffer.\n");
+                            goto cleanup;
+                        }
+                        buffer = new_buffer;
+                    }
+                }
+                if (bytes_read < 0) {
+                    perror("Error reading from input stream");
                     goto cleanup;
                 }
-                buffer = new_buffer;
-            }
-        }
-        if (bytes_read < 0) {
-            perror("Error reading from input stream");
-            goto cleanup;
-        }
+        #ifdef _WIN32
+            } // end of the windows-specific 'if'
+        #endif
     }
 
     if (total_read == 0) {
         fprintf(stderr, "Warning: No data received from input stream. Attachment skipped.\n");
         goto cleanup;
     }
-    buffer[total_read] = '\0'; // Always null-terminate the buffer content.
+    buffer[total_read] = '\0';
 
-    // --- 4. Create Attachment Part based on API Mode ---
+    // --- 4. Create Attachment Part (This logic remains the same) ---
     Part* part = &state->attached_parts[state->num_attached_parts];
-    memset(part, 0, sizeof(Part)); // Zero out the struct to prevent stale pointers.
+    memset(part, 0, sizeof(Part));
 
     if (state->free_mode) {
-        // In free mode, all attachments are converted to formatted plain text.
-        // This logic now correctly handles pasted vs. file attachments.
         if (strcmp(filepath, "stdin") == 0) {
             const char* format = "\n--- Pasted Text ---\n%s\n--- End of Pasted Text ---\n";
             size_t len = snprintf(NULL, 0, format, buffer);
@@ -4081,10 +4113,8 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         part->mime_type = strdup(mime_type);
         part->base64_data = base64_encode(buffer, total_read);
 
-        // Check if any allocation failed.
         if (!part->filename || !part->mime_type || !part->base64_data) {
              fprintf(stderr, "Error: Failed to allocate memory for attachment metadata.\n");
-             // Free any partially allocated fields before cleaning up the rest.
              if (part->filename) free(part->filename);
              if (part->mime_type) free(part->mime_type);
              if (part->base64_data) free(part->base64_data);
@@ -4092,22 +4122,16 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         }
     }
 
-    // --- 5. Finalize Success ---
-    // If we reach here, the part is valid and complete.
     fprintf(stderr, "Attached %s (MIME: %s, Size: %zu bytes)\n",
             state->free_mode ? "stdin/file" : part->filename,
             state->free_mode ? "text/plain" : part->mime_type,
             total_read);
     (state->num_attached_parts)++;
 
-
-// --- 6. Cleanup ---
-// This block is reached on both success and failure paths.
 cleanup:
     if (buffer) {
         free(buffer);
     }
-    // Note: formatted_text is now owned by the Part struct, so we don't free it here.
     if (opened_here && input_stream) {
         fclose(input_stream);
     }

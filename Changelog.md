@@ -1,3 +1,16 @@
+### **Version 2.0.2**
+
+This is a usability and reliability release focused on improving how the tool handles standard input (`stdin`) across different operating systems.
+
+*   **Features:**
+    *   **Direct `stdin` Piping:** You can now use a single hyphen (`-`) as a command-line argument to treat `stdin` as a file to be attached. This provides a conventional and powerful way to pipe data from other commands (e.g., `cat report.txt | gemini-cli "Summarize this for me: -" `).
+*   **Improvements:**
+    *   **Interactive Windows Input:** The client now correctly handles multi-line input pasted directly into an interactive Windows terminal. It prints a helpful message and properly detects the end of input when you press `Ctrl+Z` and then `Enter`, fixing a major usability issue.
+    *   **Robust Stream Handling:** The logic for reading from streams was completely rewritten. It now intelligently differentiates between regular files and non-seekable streams (like pipes or the terminal), using the most efficient method for each.
+    *   **Cross-Platform End-of-File:** The underlying code now uses platform-specific methods to reliably detect the end of input on both Windows (`Ctrl+Z`) and Unix-like systems (`Ctrl+D`), ensuring consistent behavior everywhere.
+*   **Refactoring:**
+    *   The `handle_attachment_from_stream` function was refactored to separate the logic for file reading vs. pipe reading, making the code cleaner and easier to maintain.
+
 ### **Version 2.0.1**
 
 This is a major feature release that introduces robust, multi-key management to the client. The tool can now store and rotate through multiple API keys, improving reliability and making it easier to manage rate limits.
