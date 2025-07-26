@@ -7,9 +7,13 @@ It is written in C for maximum performance and portability, with no dependencies
 ## Features
 
 *   **Key-Free Mode:** Use the client without an API key via the `-f` flag. The client automatically falls back to this mode if no API key is provided, making it instantly usable.
+*   **Multi-Key Management:**
+    *   **Automatic Rotation:** Store and rotate through multiple API keys to manage rate limits and improve reliability.
+    *   **Full Management Suite:** Add, list, remove, and validate keys directly from the command line (`--add-key`, `--list-keys`, etc.) or an interactive session (`/keys ...`).
 *   **Dual-Mode Operation:** Functions as both a fully featured **interactive chat client** and a non-interactive, **scriptable command-line tool**. The mode is automatically detected based on whether input is being piped to the program.
 *   **Advanced Scripting & Piping:**
     *   Pipe content directly (`cat file | gemini-cli "summarize this"`).
+    *   Use a hyphen (`-`) to treat standard input as an attachment (`git diff | gemini-cli "commit message for: -"`).
     *   **Quiet Mode (`-q`):** Suppresses all informational output, printing only the final model response to `stdout`.
     *   **Execute Mode (`-e`):** Forces a non-interactive run for a single prompt, even if not using pipes.
     *   Save the history of a non-interactive run with `--save-session`.
@@ -39,8 +43,7 @@ It is written in C for maximum performance and portability, with no dependencies
 ## Getting Started
 
 ### 1. Clone the Repository
-First, get the source code using git:
-```bash
+First, get the source code using git:```bash
 git clone https://github.com/Zibri/gemini-cli.git
 cd gemini-cli
 ```
@@ -61,7 +64,8 @@ sudo apt-get install build-essential libcurl4-openssl-dev libreadline-dev zlib1g
 **On openSUSE/Tumbleweed:**
 ```bash
 sudo zypper refresh
-sudo zypper install gcc make libcurl-devel readline-devel zlib-devel```
+sudo zypper install gcc make libcurl-devel readline-devel zlib-devel
+```
 
 **On Fedora/CentOS/RHEL:**
 ```bash
@@ -104,24 +108,29 @@ There are two ways to use the client: with an API key (official API) or without 
         Set the `GEMINI_API_KEY` environment variable.
         ```bash
         export GEMINI_API_KEY="your_api_key_here"
-        ```
-        **For Restricted Keys (Optional):**
+        ```        **For Restricted Keys (Optional):**
         If you have secured your API key to an HTTP referrer, set the `GEMINI_API_KEY_ORIGIN` environment variable. This sends the required `Origin` HTTP header.
         ```bash
         export GEMINI_API_KEY_ORIGIN="https://my-app.com"
         ```
 
     *   **Configuration File:**
-        The client will look for a `config.json` file. You can create this file to set a default model, temperature, API key, or system prompt.
+        The client will look for a `config.json` file. You can create this file to set a default model, temperature, API keys, or system prompt.
         *   **POSIX:** `~/.config/gemini-cli/config.json`
         *   **Windows:** `%APPDATA%\gemini-cli\config.json`
 
         *Example `config.json`:*
         ```json
         {
-          "api_key": "your_api_key_here",
-          "origin": "https://your-allowed-origin.com",
-          "model": "gemini-1.5-pro-latest",
+          "api_keys": [
+            "your_first_api_key",
+            "your_second_api_key"
+          ],
+          "origins": [
+            "https://your-allowed-origin.com",
+            "default"
+          ],
+          "model": "gemini-2.5-pro",
           "proxy": "http://localhost:8080",
           "temperature": 0.75,
           "seed": 42,
@@ -149,7 +158,7 @@ You can control the model and generation parameters at startup using these flags
 | `--execute` | `-e` | Force non-interactive mode for a single prompt. | `gemini-cli -e "What is 2+2?"` |
 | `--quiet` | `-q` | Suppress banners and info for clean scripting output. | `cat file.c \| ./gemini-cli -q "summarize"` |
 | `--config <path>` | `-c` | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
-| `--model <name>` | `-m` | Specify the model name to use. | `./gemini-cli -m gemini-1.5-pro-latest` |
+| `--model <name>` | `-m` | Specify the model name to use. | `./gemini-cli -m gemini-2.5-pro` |
 | `--proxy <url>` | `-p` | Use a proxy for API requests. | `./gemini-cli -p http://localhost:8080` |
 | `--system <prompt>` | `-S` | Set a system prompt for the entire session. | `./gemini-cli -S "You are a C code expert."` |
 | `--temp <float>` | `-t` | Set the generation temperature (e.g., 0.0 to 2.0). | `./gemini-cli -t 0.25` |
@@ -164,6 +173,10 @@ You can control the model and generation parameters at startup using these flags
 | `--list-sessions` | | List all saved sessions and exit. | `./gemini-cli --list-sessions` |
 | `--load-session <name>`| | Load a saved session by name. | `./gemini-cli --load-session my_chat` |
 | `--save-session <file>`| | Save conversation from a non-interactive run. | `cat f.c \| gemini-cli "prompt" --save-session f.json` |
+| `--list-keys` | | List API keys from the configuration file and exit. | `./gemini-cli --list-keys` |
+| `--add-key` | | Add a new API key to the configuration file and exit. | `./gemini-cli --add-key` |
+| `--remove-key <index>` | | Remove an API key from the configuration file and exit. | `./gemini-cli --remove-key 1` |
+| `--check-keys` | | Validate all configured API keys and exit. | `./gemini-cli --check-keys` |
 | `--loc` | | Get location information (requires `--free` mode). | `./gemini-cli -f --loc` |
 | `--map` | | Get map URL for location (requires `--free` mode). | `./gemini-cli -f --map` |
 
@@ -174,7 +187,7 @@ To start a conversation, simply run the executable. This is the default mode whe
 ./gemini-cli
 
 # Start with a specific model and an initial prompt
-./gemini-cli -m gemini-1.5-pro-latest "Tell me about the C programming language."
+./gemini-cli -m gemini-2.5-pro "Tell me about the C programming language."
 
 # Start with initial attachments and a prompt
 ./gemini-cli my_image.png my_code.py "Describe the code and the image."
@@ -189,8 +202,8 @@ The piped content is treated as a text attachment, and any arguments are used as
 # Summarize a source file, suppressing all non-essentials
 cat my_complex_function.c | ./gemini-cli -q "Explain what this C code does in simple terms"
 
-# Generate a git commit message from the staged changes
-git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes"
+# Generate a git commit message from the staged changes using the stdin attachment flag
+git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes: -"
 ```
 
 ### Interactive Commands
@@ -230,6 +243,11 @@ Type `/help` at the prompt to see a list of available commands.
 | **History Management** | |
 | `/history attachments list` | List all file attachments currently in the conversation history, with their IDs. |
 | `/history attachments remove <id>` | Remove an attachment from history using its ID (e.g., `2:1`). |
+| **Key Management** | |
+| `/keys list` | List the currently loaded API keys. |
+| `/keys add <key>` | Add a new API key for the current session. |
+| `/keys remove <index>` | Remove an API key by its index for the session. |
+| `/keys check` | Validate the currently loaded API keys. |
 | **Session Management** | |
 | `/session new` | Start a new, unsaved session (same as `/clear`). |
 | `/session list` | List all saved conversation sessions. |
