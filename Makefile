@@ -8,7 +8,7 @@ TARGET_NAME = gemini-cli
 SRC_COMMON = gemini-cli.c cJSON.c
 OBJ_COMMON = $(SRC_COMMON:.c=.o)
 # Common compiler and linker flags
-CFLAGS += -std=c99 -Wall -Wextra -g -O2 -I.
+CFLAGS += -Wall -Wextra -g -O2 -I.
 #LDFLAGS =
 
 # --- Platform-Specific Configuration ---
