@@ -1,3 +1,10 @@
+### **Version 2.0.3**
+
+This is a user experience release that streamlines the handling of file attachments in interactive mode.
+
+*   **Improvements:**
+    *   **Automatic Loading of Command-Line Attachments:** When starting an interactive session, any files attached via command-line arguments (e.g., `gemini-cli report.txt`) are now immediately loaded into the chat history. Previously, a user had to enter an initial prompt to process the files. This makes the workflow more intuitive, allowing users to attach files and instantly begin asking questions about them.
+
 ### **Version 2.0.2**
 
 This is a usability and reliability release focused on improving how the tool handles standard input (`stdin`) across different operating systems.

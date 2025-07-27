@@ -553,6 +553,12 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
         linenoiseHistoryLoad(history_path);
     #endif
 
+    if (interactive && state.num_attached_parts > 0 && initial_prompt_len == 0) {
+        //fprintf(stderr, "Note: Files attached via command line have been loaded into the history.\n");
+        add_content_to_history(&state.history, "user", state.attached_parts, state.num_attached_parts);
+        free_pending_attachments(&state);
+    }
+
     if (interactive) {
         char* line;
         char prompt_buffer[16384];
