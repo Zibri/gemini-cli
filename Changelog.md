@@ -1,3 +1,12 @@
+### **Version 2.0.4**
+
+This is a reliability and accuracy release focused on improving file type detection.
+
+*   **Improvements:**
+    *   **Smarter MIME Type Detection:** The `get_mime_type` function was completely rewritten to be content-aware. It now intelligently analyzes the first few bytes of a file (the "magic bytes") to accurately identify common image formats (`jpeg`, `png`, `gif`, `webp`) or to heuristically determine if a file is plain text.
+    *   **Fallback to Extension:** If the content analysis is inconclusive (e.g., the file is empty or doesn't have a recognized signature), the function falls back to the previous method of checking the file extension.
+    *   **Robustness:** This new approach makes file handling more reliable, as it no longer depends solely on the file's name. It correctly identifies files even if they have an incorrect or missing extension.
+
 ### **Version 2.0.3**
 
 This is a user experience release that streamlines the handling of file attachments in interactive mode.

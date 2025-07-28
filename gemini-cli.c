@@ -1282,6 +1282,132 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
 
 // --- Helper and Utility Functions ---
 
+/**
+ * @brief Heuristically determines if a buffer contains text data.
+ * @details It checks a sample of the data for a high percentage of printable
+ *          ASCII characters and the absence of null bytes, which are common
+ *          indicators of a text file.
+ * @param data A pointer to the raw file data.
+ * @param size The size of the data buffer.
+ * @return True if the data is likely text, false otherwise.
+ */
+bool is_data_text(const unsigned char* data, size_t size) {
+    if (data == NULL || size == 0) return false;
+
+    size_t sample_size = (size > 1024) ? 1024 : size;
+    int printable_count = 0;
+
+    for (size_t i = 0; i < sample_size; i++) {
+        if (data[i] == 0) return false; // Null bytes strongly indicate binary
+        if (isprint(data[i]) || data[i] == '\n' || data[i] == '\r' || data[i] == '\t') {
+            printable_count++;
+        }
+    }
+
+    // Heuristic: If over 85% of the characters are printable, it's probably text.
+    return ((double)printable_count / sample_size) > 0.85;
+}
+
+/**
+ * @brief Determines the image MIME type by inspecting the file's magic bytes.
+ * @param data A pointer to the raw file data.
+ * @param size The size of the data buffer.
+ * @return A constant string literal for the MIME type (e.g., "image/jpeg") if
+ *         a known image signature is found, otherwise NULL.
+ */
+const char* get_image_mime_type_from_data(const unsigned char* data, size_t size) {
+    if (data == NULL) return NULL;
+
+    // Check for JPEG (JPG) - FF D8 FF
+    if (size >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
+        return "image/jpeg";
+    }
+    // Check for PNG - 89 50 4E 47 0D 0A 1A 0A
+    if (size >= 8 && memcmp(data, "\x89PNG\r\n\x1a\n", 8) == 0) {
+        return "image/png";
+    }
+    // Check for GIF - "GIF87a" or "GIF89a"
+    if (size >= 6 && memcmp(data, "GIF8", 4) == 0 && (data[4] == '7' || data[4] == '9') && data[5] == 'a') {
+        return "image/gif";
+    }
+    // Check for WebP - "RIFF" at start, "WEBP" at offset 8
+    if (size >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WEBP", 4) == 0) {
+        return "image/webp";
+    }
+
+    return NULL; // Not a recognized image format
+}
+
+/**
+ * @brief Determines the MIME type of a file by inspecting its content and extension.
+ * @details This function first attempts to open the file and read its header to
+ *          check for known "magic bytes" (for images) or to heuristically
+ *          determine if it's a text file. If the file cannot be opened or if the
+ *          content is inconclusive, it falls back to checking the file extension
+ *          using efficient array lookups.
+ * @param filename The name of the file.
+ * @return A constant string literal representing the guessed MIME type.
+ */
+const char* get_mime_type(const char* filename) {
+    // --- Content-Aware Analysis ---
+    FILE *file = fopen(filename, "rb");
+    if (file) {
+        unsigned char buffer[1024];
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer), file);
+        fclose(file);
+
+        if (bytes_read > 0) {
+            // 1. Check for image formats by magic bytes first.
+            const char* image_mime = get_image_mime_type_from_data(buffer, bytes_read);
+            if (image_mime != NULL) {
+                return image_mime;
+            }
+            // 2. Heuristically check if the file is plain text.
+            if (is_data_text(buffer, bytes_read)) {
+                return "text/plain";
+            }
+        }
+    }
+
+    // --- Fallback to Extension-Based Analysis ---
+    const char *dot = strrchr(filename, '.');
+    if (!dot || dot == filename) {
+        return "text/plain"; // Default if no extension.
+    }
+
+    // Array for extensions that should be treated as plain text.
+    static const char* text_extensions[] = {
+        ".txt", ".c", ".h", ".cpp", ".hpp", ".py", ".ts", ".java",
+        ".cs", ".go", ".php", ".rs", ".md", ".yml", ".yaml", ".sh",
+        ".bat", ".pl", ".rb", ".jsx", ".tsx", ".vue", ".svelte",
+        ".dart", ".kt", ".swift", ".r", ".sql", ".toml", ".ini", ".cfg"
+    };
+
+    // More specific text-based MIME types.
+    if (STRCASECMP(dot, ".html") == 0) return "text/html";
+    if (STRCASECMP(dot, ".css") == 0) return "text/css";
+    if (STRCASECMP(dot, ".js") == 0) return "text/javascript";
+    if (STRCASECMP(dot, ".xml") == 0) return "application/xml";
+    if (STRCASECMP(dot, ".json") == 0) return "application/json";
+
+    // Loop through the generic text extensions array.
+    for (size_t i = 0; i < sizeof(text_extensions) / sizeof(text_extensions[0]); i++) {
+        if (STRCASECMP(dot, text_extensions[i]) == 0) {
+            return "text/plain";
+        }
+    }
+
+    // Fallback for non-text types by extension.
+    if (STRCASECMP(dot, ".pdf") == 0) return "application/pdf";
+    if (STRCASECMP(dot, ".jpg") == 0 || STRCASECMP(dot, ".jpeg") == 0) return "image/jpeg";
+    if (STRCASECMP(dot, ".png") == 0) return "image/png";
+    if (STRCASECMP(dot, ".gif") == 0) return "image/gif";
+    if (STRCASECMP(dot, ".webp") == 0) return "image/webp";
+
+    // Default for any unrecognized extension.
+    return "application/octet-stream"; // or text/plain ?
+}
+
 // Helper function to remove a substring from a string.
 // Returns a new dynamically allocated string.
 static char* str_replace(const char* orig, const char* rep, const char* with) {
@@ -4141,48 +4267,6 @@ cleanup:
     if (opened_here && input_stream) {
         fclose(input_stream);
     }
-}
-
-/**
- * @brief Determines the MIME type of a file based on its extension.
- * @details This function performs a simple, case-insensitive check of the file
- *          extension to guess its MIME type. It covers common text, code, image,
- *          and document formats. If the extension is unknown, it defaults to
- *          "text/plain".
- * @param filename The name of the file.
- * @return A constant string literal representing the guessed MIME type.
- */
-const char* get_mime_type(const char* filename) {
-    // Find the last dot in the filename to identify the extension.
-    const char *dot = strrchr(filename, '.');
-    if (!dot || dot == filename) {
-        return "text/plain"; // Default if no extension is found.
-    }
-
-    // --- Text and Code Formats ---
-    if (STRCASECMP(dot, ".txt") == 0) return "text/plain";
-    if (STRCASECMP(dot, ".c") == 0 || STRCASECMP(dot, ".h") == 0 || STRCASECMP(dot, ".cpp") == 0 ||
-        STRCASECMP(dot, ".hpp") == 0 || STRCASECMP(dot, ".py") == 0 || STRCASECMP(dot, ".js") == 0 ||
-        STRCASECMP(dot, ".ts") == 0 || STRCASECMP(dot, ".java") == 0 || STRCASECMP(dot, ".cs") == 0 ||
-        STRCASECMP(dot, ".go") == 0 || STRCASECMP(dot, ".rs") == 0 || STRCASECMP(dot, ".sh") == 0 ||
-        STRCASECMP(dot, ".rb") == 0 || STRCASECMP(dot, ".php") == 0 || STRCASECMP(dot, ".css") == 0 ||
-        STRCASECMP(dot, ".md") == 0) {
-        return "text/plain";
-    }
-    // --- Web and Data Formats ---
-    if (STRCASECMP(dot, ".html") == 0) return "text/html";
-    if (STRCASECMP(dot, ".json") == 0) return "application/json";
-    if (STRCASECMP(dot, ".xml") == 0) return "application/xml";
-    // --- Image Formats ---
-    if (STRCASECMP(dot, ".jpg") == 0 || STRCASECMP(dot, ".jpeg") == 0) return "image/jpeg";
-    if (STRCASECMP(dot, ".png") == 0) return "image/png";
-    if (STRCASECMP(dot, ".gif") == 0) return "image/gif";
-    if (STRCASECMP(dot, ".webp") == 0) return "image/webp";
-    // --- Document Formats ---
-    if (STRCASECMP(dot, ".pdf") == 0) return "application/pdf";
-
-    // Default for any unrecognized extension.
-    return "text/plain";
 }
 
 /**
