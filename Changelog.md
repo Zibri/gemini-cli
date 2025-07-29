@@ -1,3 +1,14 @@
+### **Version 2.0.5**
+
+This is a flexibility and developer-focused release that introduces custom API host support.
+
+*   **Features:**
+    *   **Custom API Host:** The client can now be configured to send API requests to a custom host instead of the default `generativelanguage.googleapis.com`. This is a powerful feature for users who need to target specific regional endpoints or use the client with self-hosted or proxy-based API environments.
+    *   **Configuration Methods:** The API host can be set in multiple ways for maximum flexibility:
+        *   **Command-Line Flag:** Use the `-H` or `--host` flag to set the host for a single run.
+        *   **Interactive Command:** Use the new `/host <hostname>` command to change the host during an interactive session. Use `/host` to view the current setting.
+        *   **Configuration File:** The `host` setting is now saved to and loaded from the `config.json` file.
+
 ### **Version 2.0.4**
 
 This is a reliability and accuracy release focused on improving file type detection.

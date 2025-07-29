@@ -55,7 +55,7 @@
 
 // --- Configuration Constants ---
 #define DEFAULT_MODEL_NAME "gemini-2.5-pro"
-#define API_URL_FORMAT "https://generativelanguage.googleapis.com/v1beta/models/%s:%s"
+#define API_URL_FORMAT "https://%s/v1beta/models/%s:%s"
 #define FREE_API_URL "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=&f.sid=&hl=en&_reqid=&rt=c"
 #define GZIP_CHUNK_SIZE 16384
 #define ATTACHMENT_LIMIT 1024
@@ -97,6 +97,7 @@ typedef struct AppState {
     bool loc_gathered;
     char* save_session_path;
     char* final_code;
+    char *host;
 } AppState;
 
 typedef struct {
@@ -443,7 +444,11 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             state.api_keys = malloc(sizeof(char*));
             state.api_keys[0] = strdup(key_from_env);
             state.origins = malloc(sizeof(char*));
-            state.origins[0] = strdup(origin_from_env);
+            if (origin_from_env) {
+                state.origins[0] = strdup(origin_from_env);
+            } else {
+                state.origins[0] = strdup("default");
+            }
             state.next_key_index = 0;
         }
 
@@ -811,6 +816,22 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         fprintf(stderr, "Configuration reloaded from file.\n");
                     } else {
                         fprintf(stderr, "Usage: /config <save|load>\n");
+                    }
+                } else if (strcmp(command_buffer, "/host") == 0) {
+                    if (*arg_start == '\0') {
+                        if (state.host) {
+                            fprintf(stderr, "Host is https://%s\n", state.host);
+                        } else {
+                            fprintf(stderr, "Host is empty.\n");
+                        }
+                    } else {
+                        if (state.host != NULL) free(state.host);
+                        state.host = strdup(arg_start);
+                        if (!state.host) {
+                            fprintf(stderr, "Error: Failed to allocate memory for host.\n");
+                        } else {
+                            fprintf(stderr, "Host set to: '%s'\n", state.host);
+                        }
                     }
                 } else if (strcmp(command_buffer, "/models") == 0) {
                     list_available_models(&state);
@@ -1270,6 +1291,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
         free(state.origins);
     }
 
+    if(state.host) free(state.host);
     if(state.last_model_response) free(state.last_model_response);
     if(state.last_free_response_part) free(state.last_free_response_part);
     if(state.system_prompt) free(state.system_prompt);
@@ -1896,6 +1918,8 @@ bool send_free_api_request(AppState* state, const char* prompt) {
         headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded;charset=UTF-8");
         headers = curl_slist_append(headers, "Origin: https://gemini.google.com");
         headers = curl_slist_append(headers, "Referer: https://gemini.google.com/");
+        
+        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
 
         curl_easy_setopt(curl, CURLOPT_URL, FREE_API_URL);
         if (state->proxy[0] != '\0') {
@@ -1978,6 +2002,7 @@ void save_configuration(AppState* state) {
     }
 
     // Add all configurable values from the state to the JSON object.
+    cJSON_AddStringToObject(root, "host", state->host);
     cJSON_AddStringToObject(root, "model", state->model_name);
     cJSON_AddNumberToObject(root, "temperature", state->temperature);
     cJSON_AddNumberToObject(root, "seed", state->seed);
@@ -2135,10 +2160,10 @@ void list_available_models(AppState* state) {
 
         // Construct the appropriate URL for the request.
         if (first_page) {
-            snprintf(full_url, sizeof(full_url), "https://generativelanguage.googleapis.com/v1beta/models?pageSize=50");
+            snprintf(full_url, sizeof(full_url), "https://%s/v1beta/models?pageSize=50", state->host);
             first_page = false;
         } else {
-            snprintf(full_url, sizeof(full_url), "https://generativelanguage.googleapis.com/v1beta/models?pageSize=50&pageToken=%s", next_page_token);
+            snprintf(full_url, sizeof(full_url), "https://%s/v1beta/models?pageSize=50&pageToken=%s", state->host, next_page_token);
         }
 
         // --- START OF MODIFICATION ---
@@ -2559,27 +2584,6 @@ static void json_read_bool(const cJSON* obj, const char* key, bool* target) {
 }
 
 /**
- * @brief Safely reads a string from a cJSON object and allocates new memory for it.
- * @details This is used for fields that can be of variable length, like the
- *          system prompt. The caller is responsible for freeing the memory
- *          allocated to `*target`.
- * @param obj The cJSON object to read from.
- * @param key The key of the string value to read.
- * @param target A pointer to the char pointer that will hold the new string.
- *               If `*target` already points to a string, it will be freed first.
- */
-static void json_read_strdup(const cJSON* obj, const char* key, char** target) {
-    const cJSON* item = cJSON_GetObjectItem(obj, key);
-    if (cJSON_IsString(item) && (item->valuestring != NULL)) {
-        // Free the existing string, if any, to prevent memory leaks.
-        if (*target) {
-            free(*target);
-        }
-        *target = strdup(item->valuestring);
-    }
-}
-
-/**
  * @brief Parses command-line options and updates the application state.
  * @details This function iterates through the command-line arguments, looking for
  *          recognized flags (e.g., -m, --temp, --free). When a flag is found,
@@ -2599,7 +2603,7 @@ static void json_read_strdup(const cJSON* obj, const char* key, char** target) {
 */
 typedef enum {
     OPT_UNKNOWN,
-    OPT_MODEL, OPT_SYSTEM, OPT_CONFIG,
+    OPT_MODEL, OPT_HOST, OPT_SYSTEM, OPT_CONFIG,
     OPT_TEMP, OPT_PROXY, OPT_SEED, OPT_MAX_TOKENS,
     OPT_TOPK, OPT_TOPP, OPT_BUDGET,
     OPT_EXECUTE, OPT_QUIET, OPT_NO_GROUNDING, OPT_FREE, OPT_NO_URL_CONTEXT,
@@ -2614,6 +2618,7 @@ typedef enum {
 */
 static OptionType classify_option(const char *arg) {
     if (!STRCASECMP(arg, "-m")          || !STRCASECMP(arg, "--model"))          return OPT_MODEL;
+    if (!STRCASECMP(arg, "-H")          || !STRCASECMP(arg, "--host"))           return OPT_HOST;
     if (!STRCASECMP(arg, "-S")          || !STRCASECMP(arg, "--system"))         return OPT_SYSTEM;
     if (!STRCASECMP(arg, "-c")          || !STRCASECMP(arg, "--config"))         return OPT_CONFIG;
     if (!STRCASECMP(arg, "-t")          || !STRCASECMP(arg, "--temp"))           return OPT_TEMP;
@@ -2656,6 +2661,16 @@ int parse_common_options(int argc, char *argv[], AppState *state) {
                     strncpy(state->model_name,
                             next_arg,
                             sizeof(state->model_name) - 1);
+                    i++;
+                }
+                break;
+
+            case OPT_HOST:
+                if (next_arg) {
+                    if (state->host) {
+                        free(state->host);
+                    }
+                    state->host = strdup(next_arg);
                     i++;
                 }
                 break;
@@ -2998,6 +3013,8 @@ void initialize_default_state(AppState* state) {
     state->loc_gathered = false;
     
     state->save_session_path = NULL;
+    
+    state->host = strdup("generativelanguage.googleapis.com");
 }
 
 /**
@@ -3218,6 +3235,27 @@ void get_config_path(char* buffer, size_t buffer_size) {
 }
 
 /**
+ * @brief Safely reads a string from a cJSON object and allocates new memory for it.
+ * @details This is used for fields that can be of variable length, like the
+ *          system prompt. The caller is responsible for freeing the memory
+ *          allocated to `*target`.
+ * @param obj The cJSON object to read from.
+ * @param key The key of the string value to read.
+ * @param target A pointer to the char pointer that will hold the new string.
+ *               If `*target` already points to a string, it will be freed first.
+ */
+static void json_read_strdup(const cJSON* obj, const char* key, char** target) {
+    const cJSON* item = cJSON_GetObjectItem(obj, key);
+    if (cJSON_IsString(item) && (item->valuestring != NULL)) {
+        // Free the existing string, if any, to prevent memory leaks.
+        if (*target) {
+            free(*target);
+        }
+        *target = strdup(item->valuestring);
+    }
+}
+
+/**
  * @brief Loads application settings from a specified configuration file path.
  * @details This function reads a JSON configuration file from the given path,
  *          parses it, and updates the application's state with the values found
@@ -3268,6 +3306,7 @@ void load_configuration_from_path(AppState* state, const char* filepath) {
     // Use the helper functions to safely read each value from the JSON object
     // into the AppState struct. This gracefully handles missing keys.
     json_read_string(root, "model", state->model_name, sizeof(state->model_name));
+    json_read_strdup(root, "host", &state->host);
     json_read_float(root, "temperature", &state->temperature);
     json_read_int(root, "seed", &state->seed);
     json_read_strdup(root, "system_prompt", &state->system_prompt);
@@ -4343,7 +4382,7 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
     
     // Construct the full API URL from the model name and endpoint.
     char full_api_url[256];
-    snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->model_name, endpoint);
+    snprintf(full_api_url, sizeof(full_api_url), API_URL_FORMAT, state->host, state->model_name, endpoint);
 
     // Prepare the authentication and origin headers.
     char auth_header[256];
@@ -4361,6 +4400,8 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
         headers = curl_slist_append(headers, origin_header);
     }
 
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    
     // Configure the cURL handle for the POST request.
     curl_easy_setopt(curl, CURLOPT_URL, full_api_url);
     if (state->proxy[0] != '\0') {
