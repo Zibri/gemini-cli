@@ -909,17 +909,20 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         }
                     }
                 } else if (strcmp(command_buffer, "/maxtokens") == 0) {
-                    if (*arg_start == '\0') {
-                        fprintf(stderr, "Max output tokens: %d tokens.\n", state.max_output_tokens);
-                    } else {
+                    if (*arg_start != '\0') {
                         char* endptr;
                         long tokens = strtol(arg_start, &endptr, 10);
-                        if (endptr == arg_start || *endptr != '\0' || tokens <= 0) {
+                        if (endptr == arg_start || *endptr != '\0' || tokens < 0) {
                             fprintf(stderr, "Error: Invalid max tokens value.\n");
                         } else {
                             state.max_output_tokens = (int)tokens;
-                            fprintf(stderr, "Max output tokens set to %d.\n", state.max_output_tokens);
+
                         }
+                    }
+                	  if (state.max_output_tokens > 0) {
+                      fprintf(stderr, "Max output tokens: %d tokens.\n", state.max_output_tokens);
+                    } else {
+                    	fprintf(stderr, "Max output tokens: automatic.\n");
                     }
                 } else if (strcmp(command_buffer, "/topk") == 0) {
                     if (*arg_start == '\0') {
@@ -2024,7 +2027,7 @@ void save_configuration(AppState* state) {
         cJSON_AddItemToObject(root, "origins", origins_array);
     }
     
-    cJSON_AddNumberToObject(root, "max_output_tokens", state->max_output_tokens);
+    if (state->max_output_tokens > 0) cJSON_AddNumberToObject(root, "max_output_tokens", state->max_output_tokens);
     cJSON_AddNumberToObject(root, "thinking_budget", state->thinking_budget);
     cJSON_AddBoolToObject(root, "google_grounding", state->google_grounding);
     cJSON_AddBoolToObject(root, "url_context", state->url_context);
@@ -2977,7 +2980,7 @@ void initialize_default_state(AppState* state) {
     strncpy(state->model_name, DEFAULT_MODEL_NAME, sizeof(state->model_name) - 1);
     state->temperature = 0.75f;
     state->seed = 42;
-    state->max_output_tokens = 65536; // A high default limit.
+    state->max_output_tokens = 0; // A high default limit.
 
     // Default feature toggles.
     state->google_grounding = true;
@@ -3588,7 +3591,7 @@ cJSON* build_request_json(AppState* state) {
     // --- 4. Add Generation Configuration ---
     cJSON* gen_config = cJSON_CreateObject();
     cJSON_AddNumberToObject(gen_config, "temperature", state->temperature);
-    cJSON_AddNumberToObject(gen_config, "maxOutputTokens", state->max_output_tokens);
+    if (state->max_output_tokens > 0) cJSON_AddNumberToObject(gen_config, "maxOutputTokens", state->max_output_tokens);
     cJSON_AddNumberToObject(gen_config, "seed", state->seed);
     if (state->topK > 0) {
         cJSON_AddNumberToObject(gen_config, "topK", state->topK);

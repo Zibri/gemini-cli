@@ -1,3 +1,14 @@
+### **Version 2.0.6**
+
+This is a usability and flexibility release that refines how the maximum output token limit is managed by introducing a more flexible "automatic" mode.
+
+*   **Improvements:**
+    *   **Automatic Token Limit:** The `max_output_tokens` setting now defaults to an "automatic" mode (`0`). When active, the client omits the `maxOutputTokens` parameter from the API request, allowing the Gemini API to use its own default limit. This provides more flexibility and avoids setting an arbitrary high limit.
+    *   **Enhanced `/maxtokens` Command:** The interactive `/maxtokens` command has been improved.
+        *   You can now set `/maxtokens 0` to explicitly enable the new automatic mode.
+        *   Using `/maxtokens` without an argument will now correctly report the status, printing "Max output tokens: automatic" when it's enabled.
+    *   **Smarter Configuration:** The `max_output_tokens` value is no longer saved to `config.json` when set to automatic. This ensures that the application's default behavior is preserved across sessions unless a user explicitly sets a specific limit.
+
 ### **Version 2.0.5**
 
 This is a flexibility and developer-focused release that introduces custom API host support.
