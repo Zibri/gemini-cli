@@ -1415,6 +1415,11 @@ const char* get_mime_type(const char* filename) {
     if (STRCASECMP(dot, ".xml") == 0) return "application/xml";
     if (STRCASECMP(dot, ".json") == 0) return "application/json";
 
+    // Audio formats
+    if (STRCASECMP(dot, ".wav") == 0) return "audio/wav";
+    if (STRCASECMP(dot, ".mp3") == 0) return "audio/mpeg";
+    if (STRCASECMP(dot, ".ogg") == 0) return "audio/ogg";
+    
     // Loop through the generic text extensions array.
     for (size_t i = 0; i < sizeof(text_extensions) / sizeof(text_extensions[0]); i++) {
         if (STRCASECMP(dot, text_extensions[i]) == 0) {

@@ -1,3 +1,14 @@
+### **Version 2.0.7**
+
+This is a reliability release that expands file type support for common audio formats.
+
+*   **Improvements:**
+    *   **Expanded MIME Type Detection:** The client can now correctly identify the MIME types for several common audio file formats:
+        *   `.wav` is now recognized as `audio/wav`.
+        *   `.mp3` is now recognized as `audio/mpeg`.
+        *   `.ogg` is now recognized as `audio/ogg`.
+    *   This improves the tool's ability to handle audio file attachments correctly when interacting with the Gemini API.
+
 ### **Version 2.0.6**
 
 This is a usability and flexibility release that refines how the maximum output token limit is managed by introducing a more flexible "automatic" mode.
