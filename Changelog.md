@@ -1,10 +1,3 @@
-### **Version 2.0.9**
-
-This is a reliability and bugfix release that improves the robustness of chat history management.
-
-*   **Fixes:**
-    *   **Safer Memory Allocation:** The client now uses `calloc` instead of `malloc` when allocating memory for new content in the chat history. This automatically initializes the memory to zero, preventing potential bugs that could arise from uninitialized fields in the data structures. This makes history management more stable and predictable.
-
 ### **Version 2.0.8**
 
 This is a major feature release that introduces the ability to use YouTube videos as direct context for analysis.
