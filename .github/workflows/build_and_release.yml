@@ -41,8 +41,7 @@ jobs:
       - name: Install Dependencies
         run: |
           zypper --non-interactive refresh
-          zypper --non-interactive install -t pattern devel_basis
-          zypper --non-interactive install libcurl-devel readline-devel
+          zypper --non-interactive install gcc make libcurl-devel readline-devel zlib-devel
       - name: Check out code
         uses: actions/checkout@v4
       - name: Build Application
