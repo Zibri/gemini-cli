@@ -3978,7 +3978,7 @@ void add_content_to_history(History* history, const char* role, Part* parts, int
     Content* new_content = &history->contents[history->num_contents];
     new_content->role = strdup(role);
     new_content->num_parts = num_parts;
-    new_content->parts = malloc(sizeof(Part) * num_parts);
+    new_content->parts = calloc(num_parts, sizeof(Part));
 
     if (!new_content->parts || !new_content->role) {
         fprintf(stderr, "Error: malloc failed for new history content.\n");
