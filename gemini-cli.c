@@ -63,8 +63,15 @@
 
 // --- Data Structures ---
 typedef struct { unsigned char* data; size_t size; } GzipResult;
-typedef enum { PART_TYPE_TEXT, PART_TYPE_FILE } PartType;
-typedef struct { PartType type; char* text; char* mime_type; char* base64_data; char* filename; } Part;
+typedef enum { PART_TYPE_TEXT, PART_TYPE_FILE, PART_TYPE_URI } PartType;
+typedef struct {
+    PartType type;
+    char* text;
+    char* mime_type;
+    char* base64_data;
+    char* filename;
+    char* uri;
+} Part;
 typedef struct { char* role; Part* parts; int num_parts; } Content;
 typedef struct { Content* contents; int num_contents; } History;
 typedef struct { char* buffer; size_t size; char* full_response; size_t full_response_size; } MemoryStruct;
@@ -1041,8 +1048,12 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         } else {
                             fprintf(stderr,"Pending Attachments:\n");
                             for (int i = 0; i < state.num_attached_parts; i++) {
-                                fprintf(stderr,"  [%d] %s (MIME: %s)\n", i, state.attached_parts[i].filename, state.attached_parts[i].mime_type);
-                            }
+                            	  Part* part = &state.attached_parts[i];
+                                if (part->type == PART_TYPE_URI) {
+                                    fprintf(stderr,"  [%d] %s (MIME: %s)\n", i, part->uri, part->mime_type);
+                                } else {
+                                    fprintf(stderr,"  [%d] %s (MIME: %s)\n", i, part->filename, part->mime_type);
+                                }                            }
                         }
                     } else if (strcmp(sub_command, "clear") == 0) {
                         free_pending_attachments(&state);
@@ -1056,10 +1067,17 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                             if (endptr == arg_str || *endptr != '\0' || index_to_remove < 0 || index_to_remove >= state.num_attached_parts) {
                                 fprintf(stderr,"Error: Invalid attachment index.\n");
                             } else {
-                                fprintf(stderr,"Removing attachment: %s\n", state.attached_parts[index_to_remove].filename);
-                                free(state.attached_parts[index_to_remove].filename);
-                                free(state.attached_parts[index_to_remove].mime_type);
-                                free(state.attached_parts[index_to_remove].base64_data);
+                                Part* part_to_remove = &state.attached_parts[index_to_remove];
+                                // MODIFICATION: Use filename if it exists, otherwise use URI for the display message
+                                const char* identifier = part_to_remove->filename ? part_to_remove->filename : part_to_remove->uri;
+                                fprintf(stderr,"Removing attachment: %s\n", identifier);
+
+                                // MODIFICATION: Free all possible fields, including the new 'uri' field
+                                if (part_to_remove->filename) free(part_to_remove->filename);
+                                if (part_to_remove->mime_type) free(part_to_remove->mime_type);
+                                if (part_to_remove->base64_data) free(part_to_remove->base64_data);
+                                if (part_to_remove->uri) free(part_to_remove->uri);
+
 
                                 if (index_to_remove < state.num_attached_parts - 1) {
                                     memmove(&state.attached_parts[index_to_remove],
@@ -1091,14 +1109,17 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                                 Content* content = &state.history.contents[i];
                                 for (int j = 0; j < content->num_parts; j++) {
                                     Part* part = &content->parts[j];
-                                    if (part->type == PART_TYPE_FILE) {
+                                    if (part->type == PART_TYPE_FILE || part->type == PART_TYPE_URI) {
                                         if (!found) {
-                                            fprintf(stderr,"  ID      | Role  | Filename / Description\n");
-                                            fprintf(stderr,"----------|-------|----------------------------------------\n");
+                                            fprintf(stderr,"  ID      | Role  | Type    | Description\n");
+                                            fprintf(stderr,"----------|-------|---------|----------------------------------------\n");
                                             found = true;
                                         }
-                                        fprintf(stderr,"  [%-2d:%-2d] | %-5s | %s (MIME: %s)\n", i, j, content->role, part->filename ? part->filename : "Pasted/Loaded Data", part->mime_type);
-                                    }
+                                        if (part->type == PART_TYPE_FILE) {
+                                            fprintf(stderr,"  [%-2d:%-2d] | %-5s | File    | %s (MIME: %s)\n", i, j, content->role, part->filename ? part->filename : "Pasted Data", part->mime_type);
+                                        } else { // PART_TYPE_URI
+                                            fprintf(stderr,"  [%-2d:%-2d] | %-5s | URL     | %s\n", i, j, content->role, part->uri);
+                                        }                                    }
                                 }
                             }
                             if (!found) {
@@ -1119,15 +1140,23 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                                 } else {
                                     Content* content = &state.history.contents[msg_idx];
                                     Part* part_to_remove = &content->parts[part_idx];
-                                    if (part_to_remove->type != PART_TYPE_FILE) {
+                                    if (part_to_remove->type != PART_TYPE_FILE && part_to_remove->type != PART_TYPE_URI) {
                                         fprintf(stderr,"Error: Part [%d:%d] is not a file attachment.\n", msg_idx, part_idx);
                                     } else {
-                                        fprintf(stderr,"Removing attachment [%d:%d]: %s\n", msg_idx, part_idx, part_to_remove->filename ? part_to_remove->filename : "Pasted Data");
+                                        const char* identifier = "Pasted Data"; // Default for pasted content
+                                        if (part_to_remove->filename) {
+                                            identifier = part_to_remove->filename; // Use filename if it exists
+                                        } else if (part_to_remove->uri) {
+                                            identifier = part_to_remove->uri; // Else, use URI if it exists
+                                        }
+
+                                        fprintf(stderr, "Removing attachment [%d:%d]: %s\n", msg_idx, part_idx, identifier);
 
                                         if (part_to_remove->filename) free(part_to_remove->filename);
                                         if (part_to_remove->mime_type) free(part_to_remove->mime_type);
                                         if (part_to_remove->base64_data) free(part_to_remove->base64_data);
                                         if (part_to_remove->text) free(part_to_remove->text);
+                                        if (part_to_remove->uri) free(part_to_remove->uri);
 
                                         if (part_idx < content->num_parts - 1) {
                                             memmove(&content->parts[part_idx], &content->parts[part_idx + 1], (content->num_parts - part_idx - 1) * sizeof(Part));
@@ -3565,7 +3594,12 @@ cJSON* build_request_json(AppState* state) {
                 if (current_part->text) {
                     cJSON_AddStringToObject(part_item, "text", current_part->text);
                 }
-            } else { // PART_TYPE_FILE
+            } else if (current_part->type == PART_TYPE_URI) {
+                cJSON* file_data = cJSON_CreateObject();
+                cJSON_AddStringToObject(file_data, "fileUri", current_part->uri);
+                cJSON_AddStringToObject(file_data, "mimeType", current_part->mime_type);
+                cJSON_AddItemToObject(part_item, "fileData", file_data);
+            } else {
                 cJSON* inline_data = cJSON_CreateObject();
                 cJSON_AddStringToObject(inline_data, "mimeType", current_part->mime_type);
                 cJSON_AddStringToObject(inline_data, "data", current_part->base64_data);
@@ -3865,10 +3899,19 @@ void load_history_from_file(AppState* state, const char* filepath) {
                 if (part_idx >= num_parts) break; // Should not happen, but safe
                 cJSON* text_json = cJSON_GetObjectItem(part_item, "text");
                 cJSON* inline_data_json = cJSON_GetObjectItem(part_item, "inlineData");
+                cJSON* file_data_json = cJSON_GetObjectItem(part_item, "fileData");
 
                 if (cJSON_IsString(text_json)) {
                     loaded_parts[part_idx].type = PART_TYPE_TEXT;
                     loaded_parts[part_idx].text = strdup(text_json->valuestring);
+                } else if (file_data_json) {
+                    cJSON* uri_json = cJSON_GetObjectItem(file_data_json, "fileUri");
+                    cJSON* mime_json = cJSON_GetObjectItem(file_data_json, "mimeType");
+                    if (cJSON_IsString(uri_json) && cJSON_IsString(mime_json)) {
+                        loaded_parts[part_idx].type = PART_TYPE_URI;
+                        loaded_parts[part_idx].uri = strdup(uri_json->valuestring);
+                        loaded_parts[part_idx].mime_type = strdup(mime_json->valuestring);
+                    }
                 } else if (inline_data_json) {
                     cJSON* mime_json = cJSON_GetObjectItem(inline_data_json, "mimeType");
                     cJSON* data_json = cJSON_GetObjectItem(inline_data_json, "data");
@@ -3954,6 +3997,12 @@ void add_content_to_history(History* history, const char* role, Part* parts, int
             new_content->parts[i].mime_type = NULL;
             new_content->parts[i].base64_data = NULL;
             new_content->parts[i].filename = NULL;
+        } else if (parts[i].type == PART_TYPE_URI) {
+            new_content->parts[i].text = NULL;
+            new_content->parts[i].mime_type = parts[i].mime_type ? strdup(parts[i].mime_type) : NULL;
+            new_content->parts[i].base64_data = NULL;
+            new_content->parts[i].filename = NULL;
+            new_content->parts[i].uri = parts[i].uri ? strdup(parts[i].uri) : NULL;
         } else { // PART_TYPE_FILE
             new_content->parts[i].text = NULL;
             new_content->parts[i].mime_type = parts[i].mime_type ? strdup(parts[i].mime_type) : NULL;
@@ -3984,6 +4033,7 @@ void free_content(Content* content) {
             if (content->parts[i].mime_type) free(content->parts[i].mime_type);
             if (content->parts[i].base64_data) free(content->parts[i].base64_data);
             if (content->parts[i].filename) free(content->parts[i].filename);
+            if (content->parts[i].uri) free(content->parts[i].uri);
         }
         // Free the array of parts itself.
         free(content->parts);
@@ -4131,6 +4181,17 @@ bool is_path_safe(const char* path) {
 }
 
 /**
+ * @brief Checks if a string is a recognizable YouTube URL.
+ * @param url The string to check.
+ * @return True if it's a YouTube URL, false otherwise.
+ */
+bool is_youtube_url(const char* url) {
+    if (url == NULL) return false;
+    // Check for the two common YouTube URL formats.
+    return (strstr(url, "youtube.com/watch") != NULL || strstr(url, "youtu.be/") != NULL);
+}
+
+/**
  * @brief Reads data from a stream and creates a pending file attachment.
  * @details This function is a robust, production-ready handler for all file and
  *          stream-based attachments (`/attach`, `/paste`, piped input). It safely
@@ -4160,6 +4221,31 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
         return;
     }
 
+    // This block intercepts the call if the filepath is a YouTube URL.
+    if (stream == NULL && is_youtube_url(filepath)) {
+        if (state->free_mode) {
+            fprintf(stderr, "Warning: URL attachments are not supported in free mode. Ignoring %s\n", filepath);
+            return;
+        }
+        Part* part = &state->attached_parts[state->num_attached_parts];
+        memset(part, 0, sizeof(Part));
+
+        part->type = PART_TYPE_URI;
+        part->uri = strdup(filepath);
+        part->mime_type = strdup("video/*"); // As specified in your example
+
+        if (!part->uri || !part->mime_type) {
+            fprintf(stderr, "Error: Failed to allocate memory for YouTube URL attachment.\n");
+            if (part->uri) free(part->uri);
+            if (part->mime_type) free(part->mime_type);
+            return;
+        }
+
+        fprintf(stderr, "Attached YouTube URL: %s\n", filepath);
+        (state->num_attached_parts)++;
+        return; // Exit the function since we've handled the attachment.
+    }
+    
     // --- 2. Resource Acquisition ---
     if (input_stream == NULL) {
         if (!is_path_safe(filepath)) {

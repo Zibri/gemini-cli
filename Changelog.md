@@ -1,3 +1,15 @@
+### **Version 2.0.8**
+
+This is a major feature release that introduces the ability to use YouTube videos as direct context for analysis.
+
+*   **Features:**
+    *   **YouTube URL Attachments:** You can now provide a YouTube URL as a command-line argument, just like a file path. The client will automatically recognize it and attach it as context for your query.
+    *   This allows the model to directly analyze the content of the YouTube video without requiring you to download it first.
+    *   Example: `gemini-cli "https://www.youtube.com/watch?v=dQw4w9WgXcQ" "What is this video about?"`
+*   **Improvements:**
+    *   **New Attachment Type:** The internal data structures were updated to support URI-based attachments (`PART_TYPE_URI`), which are sent to the API using the `fileData` field.
+    *   **Enhanced Attachment Management:** All interactive commands for managing attachments (`/attach list`, `/attach remove`, `/history files`) have been updated to correctly display and manage URL attachments alongside traditional file attachments.
+
 ### **Version 2.0.7**
 
 This is a reliability release that expands file type support for common audio formats.
