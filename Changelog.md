@@ -1,3 +1,11 @@
+### **Version 2.0.9**
+
+This is a user-safety and content filtering release that gives users explicit control over the API's safety settings.
+
+*   **Features:**
+    *   **Default Safety-Off:** The client now automatically disables the API's safety filters by default. It sends `BLOCK_NONE` thresholds for `HARM_CATEGORY_HARASSMENT`, `HARM_CATEGORY_HATE_SPEECH`, `HARM_CATEGORY_SEXUALLY_EXPLICIT`, and `HARM_CATEGORY_DANGEROUS_CONTENT`. This prevents the API from preemptively blocking responses, which is often desirable in a direct command-line interface.
+    *   **Opt-In Safety Flag:** A new `--safety` command-line flag has been introduced. When this flag is used, the client does *not* send the custom safety settings, thereby re-enabling the Gemini API's default content filtering. This allows users to opt back into the default safety measures if they prefer.
+
 ### **Version 2.0.8**
 
 This is a major feature release that introduces the ability to use YouTube videos as direct context for analysis.

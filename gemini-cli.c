@@ -105,6 +105,7 @@ typedef struct AppState {
     char* save_session_path;
     char* final_code;
     char *host;
+    bool safety;
 } AppState;
 
 typedef struct {
@@ -2643,7 +2644,7 @@ typedef enum {
     OPT_MODEL, OPT_HOST, OPT_SYSTEM, OPT_CONFIG,
     OPT_TEMP, OPT_PROXY, OPT_SEED, OPT_MAX_TOKENS,
     OPT_TOPK, OPT_TOPP, OPT_BUDGET,
-    OPT_EXECUTE, OPT_QUIET, OPT_NO_GROUNDING, OPT_FREE, OPT_NO_URL_CONTEXT,
+    OPT_EXECUTE, OPT_QUIET, OPT_NO_GROUNDING, OPT_FREE, OPT_NO_URL_CONTEXT, OPT_SAFETY,
     OPT_LOC, OPT_MAP,
     OPT_LIST_KEYS, OPT_ADD_KEY, OPT_REMOVE_KEY, OPT_CHECK_KEYS,
     OPT_LIST_MODELS, OPT_LIST_SESSIONS, OPT_SAVE_SESSION, OPT_LOAD_SESSION,
@@ -2670,6 +2671,7 @@ static OptionType classify_option(const char *arg) {
     if (!STRCASECMP(arg, "-ng")         || !STRCASECMP(arg, "--no-grounding"))   return OPT_NO_GROUNDING;
     if (!STRCASECMP(arg, "-f")          || !STRCASECMP(arg, "--free"))           return OPT_FREE;
     if (!STRCASECMP(arg, "-nu")         || !STRCASECMP(arg, "--no-url-context")) return OPT_NO_URL_CONTEXT;
+    if (!STRCASECMP(arg, "--safety"))                                            return OPT_SAFETY;
     if (!STRCASECMP(arg, "--loc"))                                               return OPT_LOC;
     if (!STRCASECMP(arg, "--map"))                                               return OPT_MAP;
     if (!STRCASECMP(arg, "--list-keys"))                                         return OPT_LIST_KEYS;
@@ -2802,6 +2804,10 @@ int parse_common_options(int argc, char *argv[], AppState *state) {
 
             case OPT_LOC:
                 state->loc_tile |= 1;
+                break;
+
+            case OPT_SAFETY:
+                state->safety |= 1;
                 break;
 
             case OPT_MAP:
@@ -3047,6 +3053,9 @@ void initialize_default_state(AppState* state) {
     state->final_code = NULL;
     
     state->loc_tile = 0;
+
+    state->safety = 0;
+
     state->loc_gathered = false;
     
     state->save_session_path = NULL;
@@ -3627,6 +3636,31 @@ cJSON* build_request_json(AppState* state) {
         cJSON_AddItemToObject(root, "tools", tools_array);
     }
 
+    // --- Add Safety Settings (Hardcoded to BLOCK_NONE) ---
+    if (!state->safety) {
+        cJSON* safety_settings_array = cJSON_CreateArray();
+        if (safety_settings_array) {
+            // CORRECTED: Use only the four universally supported categories.
+            const char* categories[] = {
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "HARM_CATEGORY_CIVIC_INTEGRITY"
+            };
+            int num_categories = sizeof(categories) / sizeof(categories[0]);
+
+            for (int i = 0; i < num_categories; i++) {
+                cJSON* setting_item = cJSON_CreateObject();
+                if (setting_item) {
+                    cJSON_AddStringToObject(setting_item, "category", categories[i]);
+                    cJSON_AddStringToObject(setting_item, "threshold", "BLOCK_NONE");
+                    cJSON_AddItemToArray(safety_settings_array, setting_item);
+                }
+            }
+            cJSON_AddItemToObject(root, "safetySettings", safety_settings_array);
+        }
+    }
     // --- 4. Add Generation Configuration ---
     cJSON* gen_config = cJSON_CreateObject();
     cJSON_AddNumberToObject(gen_config, "temperature", state->temperature);
