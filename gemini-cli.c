@@ -63,6 +63,7 @@
 
 // --- Data Structures ---
 typedef struct { unsigned char* data; size_t size; } GzipResult;
+typedef struct { unsigned char* data; size_t size; } Base64DecodeResult;
 typedef enum { PART_TYPE_TEXT, PART_TYPE_FILE, PART_TYPE_URI } PartType;
 typedef struct {
     PartType type;
@@ -121,6 +122,7 @@ void free_history(History* history);
 void free_content(Content* content);
 int get_token_count(AppState* state);
 char* base64_encode(const unsigned char* data, size_t input_length);
+Base64DecodeResult base64_decode(const char* data);
 const char* get_mime_type(const char* filename);
 GzipResult gzip_compress(const unsigned char* input_data, size_t input_size);
 cJSON* build_request_json(AppState* state);
@@ -157,6 +159,8 @@ bool send_free_api_request(AppState* state, const char* prompt);
 static void process_free_line(char* line, AppState* state);
 static size_t write_free_memory_callback(void* contents, size_t size, size_t nmemb, void* userp);
 char* build_free_request_payload(AppState* state, const char* current_prompt, bool is_pro_model);
+
+char* process_and_strip_urls(const char* original_prompt, AppState* state);
 
 /**
  * @brief Parses a single line from the API's streaming response.
@@ -594,6 +598,22 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             // Trim leading whitespace.
             char* p = line;
             while(isspace((unsigned char)*p)) p++;
+
+            if (p[0] != '/') {
+                // Create a new string with URLs stripped out and attached.
+                char* stripped_line = process_and_strip_urls(p, &state);
+
+                if (stripped_line) {
+                    // Free the original line from readline().
+                    free(line);
+                    // Point our main 'line' pointer to the new, cleaned string.
+                    line = stripped_line;
+                    // Reset 'p' to point to the start of our new line.
+                    p = line;
+                    // Re-trim leading whitespace, in case stripping the URL left some behind.
+                    while(isspace((unsigned char)*p)) p++;
+                }
+            }
 
             // Add non-empty lines to the readline history.
             if (*p) {
@@ -2300,6 +2320,7 @@ void list_available_models(AppState* state) {
  *          the AppState. It formats each user and model turn into a simple Markdown
  *          structure, including the system prompt, text content, and placeholders
  *          for file attachments. The output is saved to the specified file path.
+ *          MODIFIED: It now decodes and prints the content of text/plain attachments.
  * @param state The current application state, containing the history to be exported.
  * @param filepath The path to the Markdown file that will be created or overwritten.
  */
@@ -2339,10 +2360,26 @@ void export_history_to_markdown(AppState* state, const char* filepath) {
                 fprintf(file, "%s\n", part->text);
                 has_text = true;
             } else if (part->type == PART_TYPE_FILE) {
-                // For file attachments, write a placeholder indicating the file's name and type.
-                const char* filename = part->filename ? part->filename : "Pasted Data";
-                const char* mime_type = part->mime_type ? part->mime_type : "unknown";
-                fprintf(file, "\n`[Attached File: %s (%s)]`\n", filename, mime_type);
+                // --- MODIFICATION START ---
+                // Check if the attachment is text/plain and has data to be decoded.
+                if (part->mime_type && strcmp(part->mime_type, "text/plain") == 0 && part->base64_data) {
+                    Base64DecodeResult decoded = base64_decode(part->base64_data);
+                    if (decoded.data) {
+                        // If decoding is successful, print the content in a formatted block.
+                        fprintf(file, "\n```text\n%s\n```\n", (char*)decoded.data);
+                        free(decoded.data); // Free the memory from the decoder.
+                    } else {
+                        // If decoding fails, print a placeholder with an error.
+                        const char* filename = part->filename ? part->filename : "Pasted Data";
+                        fprintf(file, "\n`[Attached File: %s (text/plain, decoding failed)]`\n", filename);
+                    }
+                } else {
+                    // For all other file types, use the original placeholder.
+                    const char* filename = part->filename ? part->filename : "Pasted Data";
+                    const char* mime_type = part->mime_type ? part->mime_type : "unknown";
+                    fprintf(file, "\n`[Attached File: %s (%s)]`\n", filename, mime_type);
+                }
+                // --- MODIFICATION END ---
             }
         }
 
@@ -4226,6 +4263,71 @@ bool is_youtube_url(const char* url) {
 }
 
 /**
+ * @brief Scans a prompt for YouTube URLs, attaches them, and returns a new prompt string.
+ * @details This function takes a string, creates a modifiable copy, and iterates
+ *          through it to find and process YouTube URLs. For each URL found, it
+ *          uses the existing attachment handler and then removes the URL from the
+ *          string. This function correctly handles multiple URLs in a single prompt.
+ * @param original_prompt The user's raw input string.
+ * @param state A pointer to the application state to add attachments to.
+ * @return A new, dynamically allocated string containing the prompt with all
+ *         YouTube URLs stripped out. The caller is responsible for freeing this memory.
+ *         This new string is a distinct allocation from the original_prompt.
+ */
+char* process_and_strip_urls(const char* original_prompt, AppState* state) {
+    // Start with a mutable copy of the original prompt.
+    char* processed_prompt = strdup(original_prompt);
+    if (!processed_prompt) return NULL; // Should not happen
+
+    bool url_was_found_and_removed;
+    do {
+        url_was_found_and_removed = false;
+        char* search_start = processed_prompt;
+
+        // Find the beginning of a URL.
+        char* url_start = strstr(search_start, "https://");
+        if (!url_start) {
+            url_start = strstr(search_start, "http://");
+        }
+
+        if (url_start) {
+            // Find the end of the URL (a space or the end of the string).
+            char* url_end = url_start;
+            while (*url_end != '\0' && !isspace((unsigned char)*url_end)) {
+                url_end++;
+            }
+
+            // Temporarily null-terminate the URL to treat it as a separate string.
+            char original_char = *url_end;
+            *url_end = '\0';
+
+            // Check if this substring is a valid YouTube URL.
+            if (is_youtube_url(url_start)) {
+                // Attach the URL using the existing handler.
+                handle_attachment_from_stream(NULL, url_start, "video/*", state);
+
+                // Use the existing str_replace helper to remove the URL.
+                // We pass an empty string "" as the replacement.
+                char* temp_prompt = str_replace(processed_prompt, url_start, "");
+
+                // Free the old processed_prompt and point to the new one.
+                free(processed_prompt);
+                processed_prompt = temp_prompt;
+
+                // Set flag to true so the `do-while` loop runs again,
+                // allowing us to find multiple URLs in the same prompt.
+                url_was_found_and_removed = true;
+            }
+
+            // Restore the original character if we modified the string.
+             *url_end = original_char;
+        }
+    } while (url_was_found_and_removed);
+
+    return processed_prompt;
+}
+
+/**
  * @brief Reads data from a stream and creates a pending file attachment.
  * @details This function is a robust, production-ready handler for all file and
  *          stream-based attachments (`/attach`, `/paste`, piped input). It safely
@@ -4476,6 +4578,54 @@ char* base64_encode(const unsigned char* data, size_t input_length) {
 
     encoded_data[output_length] = '\0';
     return encoded_data;
+}
+
+/**
+ * @brief Decodes a Base64 string into binary data.
+ * @param data The null-terminated Base64 string to decode.
+ * @return A Base64DecodeResult struct. The `data` field contains the decoded
+ *         bytes and `size` holds the length. The caller is responsible for
+ *         freeing the `data` buffer. `data` will be NULL on failure.
+ */
+Base64DecodeResult base64_decode(const char* data) {
+    static const int b64_inv_table[] = {
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+        -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,
+        52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+        -1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+        15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+        -1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+        41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1
+    };
+
+    Base64DecodeResult result = { .data = NULL, .size = 0 };
+    size_t input_len = strlen(data);
+
+    if (input_len % 4 != 0) return result; // Invalid Base64 length
+
+    result.size = input_len / 4 * 3;
+    if (data[input_len - 1] == '=') (result.size)--;
+    if (data[input_len - 2] == '=') (result.size)--;
+
+    result.data = malloc(result.size + 1);
+    if (!result.data) return result;
+
+    for (size_t i = 0, j = 0; i < input_len; ) {
+        uint32_t sextet_a = (i < input_len) ? b64_inv_table[(unsigned char)data[i++]] : 0;
+        uint32_t sextet_b = (i < input_len) ? b64_inv_table[(unsigned char)data[i++]] : 0;
+        uint32_t sextet_c = (i < input_len) ? b64_inv_table[(unsigned char)data[i++]] : 0;
+        uint32_t sextet_d = (i < input_len) ? b64_inv_table[(unsigned char)data[i++]] : 0;
+
+        uint32_t triple = (sextet_a << 18) + (sextet_b << 12) + (sextet_c << 6) + sextet_d;
+
+        if (j < result.size) result.data[j++] = (triple >> 16) & 0xFF;
+        if (j < result.size) result.data[j++] = (triple >> 8) & 0xFF;
+        if (j < result.size) result.data[j++] = triple & 0xFF;
+    }
+
+    result.data[result.size] = '\0';
+    return result;
 }
 
 /**

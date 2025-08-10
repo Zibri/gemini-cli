@@ -1,3 +1,13 @@
+### **Version 2.1.0**
+
+This is a usability and feature enhancement release focused on streamlining the workflow for YouTube video analysis and improving the utility of conversation exports.
+
+*   **Features:**
+    *   **Automatic YouTube URL Handling:** In interactive mode, you can now paste a YouTube URL directly into the chat. The client will automatically detect the URL, attach it as context for the next prompt, and remove it from the input text. This eliminates the need to attach URLs as separate command-line arguments.
+    *   **Enhanced Markdown Export:** The `/export` command has been improved. It now decodes and embeds the content of any `text/plain` file attachments directly into the exported Markdown file. This is especially useful for preserving text that was pasted or piped into a session, making the exported history more complete and readable.
+*   **Improvements:**
+    *   A new `base64_decode` utility function was added to support the improved export functionality.
+
 ### **Version 2.0.9**
 
 This is a user-safety and content filtering release that gives users explicit control over the API's safety settings.
