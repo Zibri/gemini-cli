@@ -42,6 +42,8 @@
   #define STRCASECMP _stricmp
   #define PATH_MAX MAX_PATH
   #define stat _stat
+  #include <io.h>
+  #define NULL_DEVICE "NUL"
 #else
   #include <unistd.h>
   #include <termios.h>
@@ -49,6 +51,8 @@
   #include <readline/readline.h>
   #include <readline/history.h>
   #include <dirent.h> 
+  #include <fcntl.h>
+  #define NULL_DEVICE "/dev/null"
   #define MKDIR(path) mkdir(path, 0755)
   #define STRCASECMP strcasecmp
 #endif
@@ -288,6 +292,205 @@ static size_t write_memory_callback(void* contents, size_t size, size_t nmemb, v
     return realsize;
 }
 
+/**
+ * @brief Handles the /deep command for a silent, multi-step self-correction process.
+ * @details This function orchestrates an invisible, multi-step conversation with the model.
+ *          It generates three distinct responses by asking the model to iteratively critique
+ *          and improve its answers. All intermediate output is suppressed. It then asks the
+ *          model to synthesize these into a single, optimal solution, which is the only
+ *          output shown to the user. The entire conversation is saved to the history.
+ * @param state A pointer to the current application state.
+ * @param initial_prompt The user's initial prompt following the /deep command.
+ */
+void handle_deep_command(AppState* state, char* initial_prompt, int iterations) {
+    // We'll assume iterations is 2 or 3 based on your requirements.
+    if (iterations < 2 || iterations > 3) {
+        fprintf(stderr, "This implementation of deep mode supports 2 or 3 iterations.\n");
+        return;
+    }
+
+    // --- MODIFIED based on your request ---
+    // Select the temperature array based on the number of iterations.
+    float* temperatures;
+    float temps_for_3[] = {0.2, 0.6, 1.0};
+    float temps_for_2[] = {0.2, 1.0};
+
+    if (iterations == 3) {
+        temperatures = temps_for_3;
+    } else { // iterations == 2
+        temperatures = temps_for_2;
+    }
+    // --- END MODIFICATION ---
+
+    char** all_responses = calloc(iterations, sizeof(char*));
+    if (!all_responses) {
+        perror("calloc for all_responses");
+        return;
+    }
+
+    int old_thinking_budget = state->thinking_budget;
+    float old_temperature = state->temperature;
+    state->thinking_budget = 32000;
+
+    bool all_steps_succeeded = true;
+
+    // --- Prepare for Silent Operation ---
+    fprintf(stderr, "Thinking...");
+    fflush(stderr);
+
+    int stdout_copy = dup(fileno(stdout));
+    if (stdout_copy == -1) {
+        perror("dup");
+        free(all_responses);
+        return;
+    }
+
+    int null_fd = open(NULL_DEVICE, O_WRONLY);
+    if (null_fd == -1) {
+        perror("open");
+        close(stdout_copy);
+        free(all_responses);
+        return;
+    }
+
+    if (dup2(null_fd, fileno(stdout)) == -1) {
+        perror("dup2");
+        close(stdout_copy);
+        close(null_fd);
+        free(all_responses);
+        return;
+    }
+    close(null_fd);
+
+    // --- Steps 1-N: Generate and Refine Solutions Silently ---
+    for (int i = 0; i < iterations; i++) {
+          // Use the dynamically selected temperature for this iteration
+        state->temperature = temperatures[i];
+        char* current_turn_text = NULL;
+
+        if (i == 0) {
+            current_turn_text = strdup(initial_prompt);
+        } else {
+            if (i == 1) {
+                const char* prompt_format = "Your previous response to the prompt \"%s\" was:\n\n---\n%s\n---\n\nPlease analyze this response. Identify any flaws, inefficiencies, or incorrect assumptions. Provide a better, more efficient, and more robust solution. Explain in detail why your new solution is superior.";
+                size_t needed = snprintf(NULL, 0, prompt_format, initial_prompt, all_responses[i - 1]);
+                current_turn_text = malloc(needed + 1);
+                if (current_turn_text) {
+                    sprintf(current_turn_text, prompt_format, initial_prompt, all_responses[i - 1]);
+                }
+            } else { // i > 1 (i.e., i=2 for the third iteration)
+                const char* prompt_format = "Your previous response was:\n\n---\n%s\n---\n\nPlease analyze this response again. Are there any further improvements or edge cases you missed? Provide the most optimal and well-explained final solution.";
+                size_t needed = snprintf(NULL, 0, prompt_format, all_responses[i - 1]);
+                current_turn_text = malloc(needed + 1);
+                if (current_turn_text) {
+                    sprintf(current_turn_text, prompt_format, all_responses[i - 1]);
+                }
+            }
+        }
+
+        if (!current_turn_text) { all_steps_succeeded = false; break; }
+
+        Part user_part = { .type = PART_TYPE_TEXT, .text = current_turn_text };
+        add_content_to_history(&state->history, "user", &user_part, 1);
+
+        char* model_response_text = NULL;
+        bool success = false;
+
+        if (state->free_mode) {
+             if(state->last_free_response_part) { free(state->last_free_response_part); state->last_free_response_part = NULL; }
+             success = send_free_api_request(state, user_part.text);
+             if (success && state->last_free_response_part) model_response_text = strdup(state->last_free_response_part);
+        } else {
+            success = send_api_request(state, &model_response_text);
+        }
+
+        if (success && model_response_text) {
+            all_responses[i] = model_response_text;
+            Part model_part = { .type = PART_TYPE_TEXT, .text = all_responses[i] };
+            add_content_to_history(&state->history, "model", &model_part, 1);
+            fprintf(stderr, ".");
+            fflush(stderr);
+        } else {
+            all_steps_succeeded = false;
+            if (state->history.num_contents > 0) { state->history.num_contents--; free_content(&state->history.contents[state->history.num_contents]); }
+            free(current_turn_text);
+            break;
+        }
+        free(current_turn_text);
+    }
+
+    // --- Restore stdout ---
+    fflush(stdout);
+    if (dup2(stdout_copy, fileno(stdout)) == -1) {
+        perror("dup2 restore");
+        all_steps_succeeded = false;
+    }
+    close(stdout_copy);
+    fprintf(stderr, "\n");
+
+    state->temperature = old_temperature;
+
+    // --- Final Step: Synthesize and Print the Best Solution ---
+    if (all_steps_succeeded) {
+        size_t needed = 0;
+        char* final_prompt = NULL;
+        char* ptr = NULL;
+
+        const char* final_analysis_prompt = "Please analyze all generated responses. Synthesize them into a single, final, and optimal answer that combines the best elements of each. Your final output should be a direct and complete answer to the original prompt, not a meta-commentary about the other answers.";
+        needed += snprintf(NULL, 0, "You have generated %d responses to the initial prompt: \"%s\"\n\n", iterations, initial_prompt);
+        for (int i = 0; i < iterations; i++) {
+            needed += snprintf(NULL, 0, "--- Response %d ---\n%s\n\n", i + 1, all_responses[i]);
+        }
+        needed += strlen(final_analysis_prompt) + 1;
+
+        final_prompt = malloc(needed);
+        if (final_prompt) {
+            ptr = final_prompt;
+            ptr += sprintf(ptr, "You have generated %d responses to the initial prompt: \"%s\"\n\n", iterations, initial_prompt);
+            for (int i = 0; i < iterations; i++) {
+                ptr += sprintf(ptr, "--- Response %d ---\n%s\n\n", i + 1, all_responses[i]);
+            }
+            sprintf(ptr, "%s", final_analysis_prompt);
+
+            Part final_user_part = { .type = PART_TYPE_TEXT, .text = final_prompt };
+            add_content_to_history(&state->history, "user", &final_user_part, 1);
+
+            char* final_answer = NULL;
+            bool success = false;
+            if (state->free_mode) {
+                if(state->last_free_response_part) { free(state->last_free_response_part); state->last_free_response_part = NULL; }
+                success = send_free_api_request(state, final_prompt);
+                if (success && state->last_free_response_part) final_answer = strdup(state->last_free_response_part);
+            } else {
+                success = send_api_request(state, &final_answer);
+            }
+
+            if (success && final_answer) {
+                Part final_model_part = { .type = PART_TYPE_TEXT, .text = final_answer };
+                add_content_to_history(&state->history, "model", &final_model_part, 1);
+                if (state->last_model_response) free(state->last_model_response);
+                state->last_model_response = final_answer;
+            } else {
+                fprintf(stderr, "API call failed during final synthesis. Aborting.\n");
+                if (state->history.num_contents > 0) { state->history.num_contents--; free_content(&state->history.contents[state->history.num_contents]); }
+                if (final_answer) free(final_answer);
+            }
+            free(final_prompt);
+        }
+    } else {
+        fprintf(stderr, "\nDeep mode failed during an intermediate step.\n");
+    }
+
+    state->thinking_budget=old_thinking_budget;
+
+    // --- Cleanup ---
+    for (int i = 0; i < iterations; i++) {
+        if (all_responses[i]) {
+            free(all_responses[i]);
+        }
+    }
+    free(all_responses);
+}
 
 // --- Main Application Logic ---
 /**
@@ -599,6 +802,49 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             char* p = line;
             while(isspace((unsigned char)*p)) p++;
 
+            // Check for the common prefix "/deep".
+            if (strncmp(p, "/deep", 5) == 0) {
+                int depth = 2;          // Default parameter for "/deep"
+                char* command_end = p + 5; // Set pointer to after "/deep"
+
+                // Now, check for the "er" suffix to identify "/deeper".
+                if (strncmp(command_end, "er", 2) == 0) {
+                    depth = 3;         // It's "/deeper", so update the parameter.
+                    command_end += 2;  // Advance the pointer past "er".
+                }
+
+                // After the command, there must be a space. This prevents
+                // matching invalid commands like "/deep_thought".
+                if (*command_end == ' ') {
+                    char* deep_prompt = command_end + 1; // Move past the space
+                    while(isspace((unsigned char)*deep_prompt)) deep_prompt++;
+
+                    if (*deep_prompt == '\0') {
+                        // Use the depth to show the correct usage message.
+                        if (depth == 2) {
+                            fprintf(stderr, "Usage: /deep <your prompt>\n");
+                        } else {
+                            fprintf(stderr, "Usage: /deeper <your prompt>\n");
+                        }
+                    } else {
+                        // Call the handler with the correct, dynamically set depth.
+                        handle_deep_command(&state, deep_prompt, depth);
+                    }
+
+                    // The single, shared block for history and cleanup.
+                    if (*p) {
+                        #ifndef _WIN32
+                            add_history(line);
+                        #else
+                            linenoiseHistoryAdd(line);
+                            linenoiseHistorySave(history_path);
+                        #endif
+                    }
+                    free(line);
+                    continue; // Skip the rest of the loop.
+                }
+            }
+            
             if (p[0] != '/') {
                 // Create a new string with URLs stripped out and attached.
                 char* stripped_line = process_and_strip_urls(p, &state);

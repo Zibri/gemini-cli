@@ -1,3 +1,14 @@
+### **Version 2.2.0**
+
+This is a major feature release that introduces "Deep Mode," an innovative, multi-step prompting technique designed to elicit higher-quality, more refined responses from the model.
+
+*   **Features:**
+    *   **New `/deep <prompt>` Command:** This command initiates an automated, two-step refinement process. It first generates an initial answer to your prompt, then silently asks the model to critique and improve its own response. Finally, it synthesizes both into a single, optimal answer. This entire process is invisible to the user, who only sees the final, high-quality output.
+    *   **New `/deeper <prompt>` Command:** An enhanced version of `/deep` that uses a three-step refinement process for even more thorough and robust answers. It generates a response, critiques it, critiques the critique, and then synthesizes all three into a final solution.
+    *   **Dynamic Temperature Control:** The deep modes automatically use a schedule of increasing temperatures (e.g., 0.2, then 1.0 for `/deep`) for each step. This encourages the model to generate a precise initial answer and then use more creativity for the subsequent improvement and synthesis steps.
+*   **Improvements:**
+    *   **Silent Operation:** Implemented a cross-platform method to suppress all console output during the intermediate steps of the `/deep` and `/deeper` commands, ensuring a clean and focused user experience.
+
 ### **Version 2.1.0**
 
 This is a usability and feature enhancement release focused on streamlining the workflow for YouTube video analysis and improving the utility of conversation exports.
