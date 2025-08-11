@@ -6,6 +6,7 @@ It is written in C for maximum performance and portability, with no dependencies
 
 ## Features
 
+*   **Deep Mode (`/deep`, `/deeper`):** An innovative, multi-step prompting technique to elicit higher-quality, more refined responses. The client silently orchestrates a multi-turn conversation where the model iteratively critiques and improves its own answers, finally synthesizing them into a single, optimal response.
 *   **Key-Free Mode:** Use the client without an API key via the `-f` flag. The client automatically falls back to this mode if no API key is provided, making it instantly usable.
 *   **Multi-Key Management:**
     *   **Automatic Rotation:** Store and rotate through multiple API keys to manage rate limits and improve reliability.
@@ -21,7 +22,10 @@ It is written in C for maximum performance and portability, with no dependencies
     *   **Automatic Retries:** Automatically retries API requests up to 3 times on `503 Service Unavailable` errors.
     *   **Proxy Support:** Route all API requests through a specified HTTP/S proxy with the `-p` flag.
 *   **Streaming Responses:** In interactive mode, see the model's response generated in real-time, just like in web UIs.
-*   **File Attachments:** Attach images, source code, PDFs, and other files to your prompts. Supports local files (`/attach`) and pasting directly from stdin (`/paste`).
+*   **File & URL Attachments:**
+    *   Attach images, source code, PDFs, and other files to your prompts (`/attach`).
+    *   Paste directly from stdin (`/paste`).
+    *   **Automatic YouTube URL Handling:** Paste a YouTube URL directly in the prompt, and the client will automatically attach it as context.
 *   **Session Management:** Save, load, list, and delete entire conversation sessions, allowing you to easily switch between different projects and contexts. The current session name is always visible in the prompt.
 *   **Conversation History:** Your conversation is maintained in memory. You can export the entire chat to a JSON file (`/save`), a Markdown file (`/export`), and import it later (`/load`).
 *   **History Management:** List and selectively remove individual file attachments from the current conversation history.
@@ -43,7 +47,8 @@ It is written in C for maximum performance and portability, with no dependencies
 ## Getting Started
 
 ### 1. Clone the Repository
-First, get the source code using git:```bash
+First, get the source code using git:
+```bash
 git clone https://github.com/Zibri/gemini-cli.git
 cd gemini-cli
 ```
@@ -89,8 +94,7 @@ pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x8
 The project includes a `Makefile` that automatically detects your operating system and compiles the program with the correct settings. Simply run:
 ```bash
 make
-```
-This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
+```This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
 
 ### 4. Configuration
 There are two ways to use the client: with an API key (official API) or without one (unofficial API).
@@ -108,7 +112,8 @@ There are two ways to use the client: with an API key (official API) or without 
         Set the `GEMINI_API_KEY` environment variable.
         ```bash
         export GEMINI_API_KEY="your_api_key_here"
-        ```        **For Restricted Keys (Optional):**
+        ```
+        **For Restricted Keys (Optional):**
         If you have secured your API key to an HTTP referrer, set the `GEMINI_API_KEY_ORIGIN` environment variable. This sends the required `Origin` HTTP header.
         ```bash
         export GEMINI_API_KEY_ORIGIN="https://my-app.com"
@@ -156,7 +161,7 @@ You can control the model and generation parameters at startup using these flags
 | `--help` | `-h` | Show the help message and exit. | `./gemini-cli --help` |
 | `--free` | `-f` | Use the unofficial, key-free API endpoint. | `./gemini-cli -f` |
 | `--execute` | `-e` | Force non-interactive mode for a single prompt. | `gemini-cli -e "What is 2+2?"` |
-| `--quiet` | `-q` | Suppress banners and info for clean scripting output. | `cat file.c \| ./gemini-cli -q "summarize"` |
+| `--quiet` | `-q` | Suppress banners and info for clean scripting output. | `cat file.c | ./gemini-cli -q "summarize"` |
 | `--config <path>` | `-c` | Load configuration from a specific file path. | `./gemini-cli -c /path/to/myconfig.json` |
 | `--model <name>` | `-m` | Specify the model name to use. | `./gemini-cli -m gemini-2.5-pro` |
 | `--proxy <url>` | `-p` | Use a proxy for API requests. | `./gemini-cli -p http://localhost:8080` |
@@ -172,7 +177,7 @@ You can control the model and generation parameters at startup using these flags
 | `--list` | `-l` | List all available models and exit. | `./gemini-cli -l` |
 | `--list-sessions` | | List all saved sessions and exit. | `./gemini-cli --list-sessions` |
 | `--load-session <name>`| | Load a saved session by name. | `./gemini-cli --load-session my_chat` |
-| `--save-session <file>`| | Save conversation from a non-interactive run. | `cat f.c \| gemini-cli "prompt" --save-session f.json` |
+| `--save-session <file>`| | Save conversation from a non-interactive run. | `cat f.c | gemini-cli "prompt" --save-session f.json` |
 | `--list-keys` | | List API keys from the configuration file and exit. | `./gemini-cli --list-keys` |
 | `--add-key` | | Add a new API key to the configuration file and exit. | `./gemini-cli --add-key` |
 | `--remove-key <index>` | | Remove an API key from the configuration file and exit. | `./gemini-cli --remove-key 1` |
@@ -203,8 +208,7 @@ The piped content is treated as a text attachment, and any arguments are used as
 cat my_complex_function.c | ./gemini-cli -q "Explain what this C code does in simple terms"
 
 # Generate a git commit message from the staged changes using the stdin attachment flag
-git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes: -"
-```
+git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes: -"```
 
 ### Interactive Commands
 
@@ -222,6 +226,8 @@ Type `/help` at the prompt to see a list of available commands.
 | **Conversation Control** | |
 | `/system [prompt]` | Set or show the system prompt that influences the model's behavior. |
 | `/clear_system` | Remove the system prompt. |
+| `/deep <prompt>` | Get a high-quality response via a 2-step, self-correcting process. |
+| `/deeper <prompt>` | Get a very high-quality response via a 3-step, self-correcting process. |
 | `/temp [value]` | Set or show the temperature. |
 | `/maxtokens [value]`| Set or show the maximum output tokens. |
 | `/budget [value]` | Set or show the max thinking budget (0 for automatic). |
