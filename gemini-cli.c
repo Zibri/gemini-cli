@@ -330,7 +330,11 @@ void handle_deep_command(AppState* state, char* initial_prompt, int iterations) 
 
     int old_thinking_budget = state->thinking_budget;
     float old_temperature = state->temperature;
-    state->thinking_budget = 32000;
+    if (strstr(state->model_name, "flash") != NULL) {
+        state->thinking_budget = 16384;
+    } else {
+    	  state->thinking_budget = 32768;
+    }
 
     bool all_steps_succeeded = true;
 
@@ -4055,6 +4059,7 @@ int get_token_count(AppState* state) {
     // The countTokens endpoint does not use these fields, so remove them.
     cJSON_DeleteItemFromObject(root, "generationConfig");
     cJSON_DeleteItemFromObject(root, "tools");
+    cJSON_DeleteItemFromObject(root, "safetySettings");
 
     // Serialize and compress the payload.
     char* json_string = cJSON_PrintUnformatted(root);

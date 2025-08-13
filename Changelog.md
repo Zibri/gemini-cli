@@ -1,3 +1,11 @@
+### **Version 2.2.1**
+
+This is a reliability and accuracy release that refines the new "Deep Mode" feature and improves token calculation.
+
+*   **Improvements:**
+    *   **Model-Aware Context Limits:** The `/deep` and `/deeper` commands are now smarter. They automatically adjust the internal thinking budget to `16384` for Flash models and `32768` for other models, ensuring that the refinement process respects the context window of the specific model being used.
+    *   **More Accurate Token Counting:** The client now removes safety settings from the payload before sending it to the `countTokens` endpoint. This results in a more accurate token count and prevents potential errors.
+
 ### **Version 2.2.0**
 
 This is a major feature release that introduces "Deep Mode," an innovative, multi-step prompting technique designed to elicit higher-quality, more refined responses from the model.
