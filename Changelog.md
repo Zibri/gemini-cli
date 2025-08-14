@@ -1,3 +1,12 @@
+### **Version 2.2.2**
+
+This is a usability release that refines the "thinking budget" feature, giving users more explicit control.
+
+*   **Improvements:**
+    *   **Explicit Budget Control:** You can now completely disable the thinking budget by setting it to `0` (e.g., `/budget 0`). This is now distinct from the "automatic" mode (`-1`), which lets the API decide.
+    *   **Clearer Status Feedback:** The client now provides more precise feedback, printing "Thinking Budget: OFF" when the budget is 0, and "Thinking Budget: automatic" when it is set to -1.
+    *   **Robust Input Handling:** The `/budget` command now correctly handles negative numbers, preventing invalid states.
+
 ### **Version 2.2.1**
 
 This is a reliability and accuracy release that refines the new "Deep Mode" feature and improves token calculation.

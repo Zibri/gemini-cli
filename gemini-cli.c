@@ -609,10 +609,12 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     }
     
     // Enforce model-specific token limits.
-    if ((strstr(state.model_name, "flash") != NULL) && (state.thinking_budget > 16384)) {
-        state.thinking_budget = 16384;
+    if (strstr(state.model_name, "flash") != NULL) {
+        if (state.thinking_budget>16384) state.thinking_budget=16384;
+    } else {
+       	if (state.thinking_budget==0) state.thinking_budget=-1;
     }
-
+                      
     // --- 4. Piped Input Handling ---
     // If the session is not interactive and stdin is not a terminal,
     // it means data is being piped in. Treat it as a text attachment.
@@ -689,7 +691,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             fprintf(stderr,"Using model: %s, Temperature: %.2f, Seed: %d\n", state.model_name, state.temperature, state.seed);
             if (state.max_output_tokens > 0) fprintf(stderr,"Max Output Tokens: %d\n", state.max_output_tokens);
             if (state.thinking_budget > 0) fprintf(stderr,"Thinking Budget: %d tokens\n", state.thinking_budget);
-            else fprintf(stderr,"Thinking Budget: automatic\n");
+            else fprintf(stderr,"Thinking Budget: %s\n",state.thinking_budget==0?"OFF.":"automatic.");
             fprintf(stderr,"Google grounding: %s\n", state.google_grounding?"ON":"OFF");
             fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
 
@@ -1169,22 +1171,25 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                     }
 
                 } else if (strcmp(command_buffer, "/budget") == 0) {
-                    if (*arg_start == '\0') {
-                        fprintf(stderr, "Thinking budget: %d tokens.\n", state.thinking_budget);
-                    } else {
+                    if (*arg_start != '\0') {
                         char* endptr;
                         long budget = strtol(arg_start, &endptr, 10);
-                        if (endptr == arg_start || *endptr != '\0' || budget < 0) {
+                        if (endptr == arg_start || *endptr != '\0' || budget < -1) {
                             fprintf(stderr, "Error: Invalid budget value.\n");
                         } else {
                             state.thinking_budget = (int)budget;
-                            if (state.thinking_budget<1) {
-                                state.thinking_budget=-1;
-                                fprintf(stderr, "Thinking budget set to automatic.\n");
-                            } else {
-                              fprintf(stderr, "Thinking budget set to %d tokens.\n", state.thinking_budget);
-                            }
+
                         }
+                      if (strstr(state.model_name, "flash") != NULL) {
+                      	if (state.thinking_budget>16384) state.thinking_budget=16384;
+                      } else {
+                      	if (state.thinking_budget==0) state.thinking_budget=-1;
+                      }
+            	        if (state.thinking_budget<0) {
+                              fprintf(stderr,"Thinking Budget: %s\n",state.thinking_budget==0?"OFF.":"automatic.");
+                      } else {
+                            fprintf(stderr, "Thinking budget: %d tokens.\n", state.thinking_budget);
+                      }
                     }
                 } else if (strcmp(command_buffer, "/maxtokens") == 0) {
                     if (*arg_start != '\0') {
