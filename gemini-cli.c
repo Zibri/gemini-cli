@@ -2748,7 +2748,7 @@ bool build_session_path(const char* session_name, char* path_buffer, size_t buff
  *          API. It builds the JSON request payload, Gzip-compresses it for
  *          efficiency, sends it via a POST request, and processes the streaming
  *          SSE response. The full, concatenated response from the model is
- *          returned upon success.
+ *          returned upon success. It includes retry logic for transient errors.
  * @param state The current application state, containing the history, configuration,
  *              and API key needed for the request.
  * @param[out] full_response_out A pointer to a character pointer. On success, this
@@ -2812,11 +2812,26 @@ bool send_api_request(AppState* state, char** full_response_out) {
 
         // 5. Decide if this attempt was successful, retryable, or a final failure.
         if (http_code == 200) {
-            success = true;
-            break; // Success, exit the loop.
-        }
-
-        if (http_code == 503) {
+            // --- MODIFICATION START ---
+            // A 200 OK is only a true success if the response body is not empty.
+            if (chunk.full_response_size == 0) {
+                // Treat the empty response as a transient, retryable error.
+                fprintf(stderr, "\nAPI returned an empty response, retrying... (%d/%d)\n", i + 1, max_retries);
+                if (i < max_retries - 1) { // Don't sleep after the final attempt.
+                    #ifdef _WIN32
+                        Sleep(2000); // 2 seconds
+                    #else
+                        sleep(2);
+                    #endif
+                }
+                // By not setting 'success' or breaking, we allow the loop to proceed to the next iteration.
+            } else {
+                // The response is valid and non-empty. This is a true success.
+                success = true;
+                break; // Success, exit the loop.
+            }
+            // --- MODIFICATION END ---
+        } else if (http_code == 503) {
             fprintf(stderr, "\nAPI returned 503 (Service Unavailable), retrying... (%d/%d)\n", i + 1, max_retries);
             if (i < max_retries - 1) { // Don't sleep after the final attempt.
                 #ifdef _WIN32
@@ -2836,9 +2851,9 @@ bool send_api_request(AppState* state, char** full_response_out) {
         *full_response_out = chunk.full_response;
     } else if (http_code == 403) {
         size_t last_index = (state->next_key_index + state->num_api_keys - 1) % state->num_api_keys;
-    	  char *current_key = state->api_keys[last_index];
-    	  char *current_origin = state->origins[last_index];
-    	  size_t key_len = strlen(current_key);
+          char *current_key = state->api_keys[last_index];
+          char *current_origin = state->origins[last_index];
+          size_t key_len = strlen(current_key);
         fprintf(stderr, "\nAPI returned 403 (Unauthorized) for key: %.4s...%.4s (%s)\n", current_key + 6, current_key + key_len - 4, current_origin);
         return false;
     } else {
@@ -2852,7 +2867,6 @@ bool send_api_request(AppState* state, char** full_response_out) {
     free(chunk.buffer);
     free(compressed_result.data);
     return success;
-
 }
 
 /**

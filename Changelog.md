@@ -1,3 +1,10 @@
+### **Version 2.2.3**
+
+This is a reliability release that makes the client more robust against transient API errors.
+
+*   **Improvements:**
+    *   **Retry on Empty Response:** The client now intelligently handles cases where the API returns a `200 OK` status but with an empty response body. It treats this as a transient error and automatically retries the request, preventing failed or incomplete outputs.
+
 ### **Version 2.2.2**
 
 This is a usability release that refines the "thinking budget" feature, giving users more explicit control.
