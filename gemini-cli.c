@@ -1308,10 +1308,46 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         fprintf(stderr,"No last response to save.\n");
                     }
                 } else if (strcmp(command_buffer, "/attach") == 0) {
-                    if (*arg_start == '\0') {
-                        fprintf(stderr,"Usage: /attach <filename>\n");
+                    char filename[PATH_MAX] = {0};
+                    char* prompt_start = NULL;
+
+                    // Step 1: Parse the filename from the argument string using sscanf.
+                    // This correctly extracts the filename and ignores surrounding whitespace.
+                    if (sscanf(arg_start, "%s", filename) != 1) {
+                        fprintf(stderr, "Usage: /attach <filename> [optional prompt...]\n");
+                        // No further action needed, the loop will continue.
                     } else {
-                        handle_attachment_from_stream(NULL, arg_start, get_mime_type(arg_start), &state);
+                        // Step 2: Attach the file using the *original*, unchanged function.
+                        // We pass NULL for the stream because we are providing a filepath.
+                        // (The function will open the file itself).
+                        handle_attachment_from_stream(NULL, filename, get_mime_type(filename), &state);
+
+                        // Step 3: Check if an optional prompt was provided after the filename.
+                        prompt_start = strstr(arg_start, filename);
+                        if (prompt_start) {
+                            prompt_start += strlen(filename); // Move pointer past the filename
+                            while (isspace((unsigned char)*prompt_start)) {
+                                prompt_start++; // Skip whitespace between filename and prompt
+                            }
+                        }
+
+                        // Step 4: If a prompt exists, prepare to send it immediately.
+                        if (prompt_start && *prompt_start != '\0') {
+                            // A prompt was found. We need to execute it using the main prompt-handling
+                            // logic at the end of the loop. To do this, we replace the original
+                            // command line with just the prompt text.
+
+                            char* prompt_only = strdup(prompt_start); // Make a copy of the prompt
+                            free(line);                                // Free the original line ("/attach ...")
+                            line = prompt_only;                       // Point 'line' to our new prompt string
+                            p = line;                                 // Reset 'p' to the start of the new line
+
+                            // CRITICAL: We tell the loop that this is no longer a command.
+                            // This ensures the prompt-sending logic will run instead of being skipped.
+                            is_command = false;
+                        }
+                        // If no prompt was found, we do nothing else. The file is now attached,
+                        // and the loop will simply present a new prompt to the user as expected.
                     }
                 } else if (strcmp(command_buffer, "/attachments") == 0) {
                     char sub_command[64] = {0};

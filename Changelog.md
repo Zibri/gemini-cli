@@ -1,3 +1,10 @@
+### **Version 2.2.4**
+
+This is a usability release that streamlines the interactive workflow for file attachments.
+
+*   **Features:**
+    *   **Combined Attach-and-Prompt Command:** The interactive `/attach` command has been enhanced to accept an optional prompt on the same line. You can now attach a file and immediately ask a question about it in a single step (e.g., `/attach report.pdf "Summarize the key findings"`). The client will attach the file and instantly send the prompt. This removes the need to wait for the next input line, making the workflow faster and more intuitive.
+
 ### **Version 2.2.3**
 
 This is a reliability release that makes the client more robust against transient API errors.
