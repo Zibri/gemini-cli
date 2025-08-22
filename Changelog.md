@@ -1,3 +1,12 @@
+### **Version 2.2.5**
+
+This is a major usability release that introduces graceful interruption of API calls.
+
+*   **Features:**
+    *   **Interruptible API Requests:** You can now press `Ctrl+C` while the model is generating a response to gracefully abort the current API request. The client will stop receiving the response and immediately return you to the interactive prompt, preserving your session history.
+    *   **Force Quit:** Pressing `Ctrl+C` a second time will immediately terminate the application, providing a reliable way to exit if needed.
+    *   **Improved Responsiveness:** This makes the interactive mode much more responsive, as you no longer have to wait for a long or unwanted response to complete.
+
 ### **Version 2.2.4**
 
 This is a usability release that streamlines the interactive workflow for file attachments.

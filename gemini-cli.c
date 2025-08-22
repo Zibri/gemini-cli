@@ -57,6 +57,8 @@
   #define STRCASECMP strcasecmp
 #endif
 
+#include <signal.h>
+
 // --- Configuration Constants ---
 #define DEFAULT_MODEL_NAME "gemini-2.5-pro"
 #define API_URL_FORMAT "https://%s/v1beta/models/%s:%s"
@@ -164,6 +166,30 @@ static void process_free_line(char* line, AppState* state);
 static size_t write_free_memory_callback(void* contents, size_t size, size_t nmemb, void* userp);
 char* build_free_request_payload(AppState* state, const char* current_prompt, bool is_pro_model);
 
+
+// --- Global Interrupt Flag ---
+volatile sig_atomic_t interrupt_flag = 0;
+
+/**
+ * @brief Signal handler for SIGINT (Ctrl+C).
+ * @details Sets a global flag to indicate that an interrupt has been requested.
+ *          This allows long-running operations like API calls to be aborted
+ *          gracefully.
+ * @param sig The signal number received (unused).
+ */
+void handle_sigint(int sig) {
+    if (interrupt_flag == 1) {
+        // If the flag is already set, this is the second interrupt.
+        // Restore the default handler for SIGINT.
+        signal(sig, SIG_DFL);
+        // Re-raise the signal to trigger the default action (termination).
+        raise(sig);
+    } else {
+        // This is the first interrupt.
+        interrupt_flag = 1;
+    }
+}
+
 char* process_and_strip_urls(const char* original_prompt, AppState* state);
 
 /**
@@ -254,6 +280,11 @@ static void process_line(char* line, MemoryStruct* mem) {
  *         different value will signal an error to libcurl.
  */
 static size_t write_memory_callback(void* contents, size_t size, size_t nmemb, void* userp) {
+
+    if (interrupt_flag) {
+        return 0;
+    }
+    
     size_t realsize = size * nmemb;
     MemoryStruct* mem = (MemoryStruct*)userp;
 
@@ -786,10 +817,11 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     }
 
     if (interactive) {
-        char* line;
+        char* line = NULL;
         char prompt_buffer[16384];
 
         while (1) {
+        	  interrupt_flag = 1;
             // Display the prompt, e.g., "([unsaved])>: "
             snprintf(prompt_buffer, sizeof(prompt_buffer), "\n(%s)>: ", state.current_session_name);
 
@@ -804,6 +836,8 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                 }
             #endif
 
+        	  interrupt_flag = 0;
+            
             // Trim leading whitespace.
             char* p = line;
             while(isspace((unsigned char)*p)) p++;
@@ -1979,6 +2013,11 @@ static void process_free_line(char* line, AppState* state) {
  *         different value will signal an error to libcurl.
  */
 static size_t write_free_memory_callback(void* contents, size_t size, size_t nmemb, void* userp) {
+
+    if (interrupt_flag) {
+        return 0;
+    }
+    
     size_t realsize = size * nmemb;
     FreeCallbackData* data = (FreeCallbackData*)userp;
     MemoryStruct* mem = data->mem;
@@ -2283,6 +2322,11 @@ bool send_free_api_request(AppState* state, const char* prompt) {
         res = curl_easy_perform(curl);
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
+        if (res == CURLE_WRITE_ERROR && interrupt_flag) {
+            fprintf(stderr, "\n[Interrupted]\n");
+            interrupt_flag = 0;
+        }
+        
         // Clean up all resources allocated for THIS specific attempt.
         free(post_fields);
         free(chunk.buffer);
@@ -5002,6 +5046,11 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
     CURLcode res = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
+    if (res == CURLE_WRITE_ERROR && interrupt_flag) {
+        fprintf(stderr, "\n[Interrupted]\n");
+        interrupt_flag = 0;
+    }
+    
     // If the request failed at the transport layer, return the negative cURL error code.
     if (res != CURLE_OK && http_code == 0) {
         http_code = -res;
@@ -5025,6 +5074,8 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
  * @return Returns 0 on successful execution.
  */
 int main(int argc, char* argv[]) {
+	
+	  signal(SIGINT, handle_sigint);
     // Initialize the cURL library globally.
     curl_global_init(CURL_GLOBAL_ALL);
 
