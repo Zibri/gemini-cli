@@ -1794,6 +1794,16 @@ const char* get_mime_type(const char* filename) {
     if (STRCASECMP(dot, ".wav") == 0) return "audio/wav";
     if (STRCASECMP(dot, ".mp3") == 0) return "audio/mpeg";
     if (STRCASECMP(dot, ".ogg") == 0) return "audio/ogg";
+    if (STRCASECMP(dot, ".m4a") == 0) return "audio/m4a";
+    if (STRCASECMP(dot, ".aac") == 0) return "audio/aac";
+    if (STRCASECMP(dot, ".flac") == 0) return "audio/flac";
+
+    // Video formats
+    if (STRCASECMP(dot, ".mp4") == 0) return "video/mpeg";
+    if (STRCASECMP(dot, ".mov") == 0) return "video/mov";
+    if (STRCASECMP(dot, ".avi") == 0) return "video/avi";
+    if (STRCASECMP(dot, ".wmv") == 0) return "video/wvm";
+    if (STRCASECMP(dot, ".flv") == 0) return "video/flv";
     
     // Loop through the generic text extensions array.
     for (size_t i = 0; i < sizeof(text_extensions) / sizeof(text_extensions[0]); i++) {
@@ -1806,6 +1816,8 @@ const char* get_mime_type(const char* filename) {
     if (STRCASECMP(dot, ".pdf") == 0) return "application/pdf";
     if (STRCASECMP(dot, ".jpg") == 0 || STRCASECMP(dot, ".jpeg") == 0) return "image/jpeg";
     if (STRCASECMP(dot, ".png") == 0) return "image/png";
+    if (STRCASECMP(dot, ".bmp") == 0) return "image/bmp";
+    if (STRCASECMP(dot, ".webp") == 0) return "image/webp";
     if (STRCASECMP(dot, ".gif") == 0) return "image/gif";
     if (STRCASECMP(dot, ".webp") == 0) return "image/webp";
 
@@ -2256,7 +2268,7 @@ char* build_free_request_payload(AppState* state, const char* current_prompt, bo
  * @details This function orchestrates the entire process of making a request
  *          to the free API. It builds the specialized payload, URL-encodes it,
  *          and performs the cURL request inside a retry loop to handle transient
- *          server errors (HTTP 503). It also correctly handles the case where
+ *          server errors (HTTP 503/524). It also correctly handles the case where
  *          the transfer is purposefully aborted by the write_callback.
  * @param state A pointer to the application's current state.
  * @param prompt The user's prompt for the current turn.
@@ -2341,8 +2353,8 @@ bool send_free_api_request(AppState* state, const char* prompt) {
         }
 
         // Case 2: Retryable server error
-        if (http_code == 503) {
-            fprintf(stderr, "\nAPI returned 503 (Service Unavailable), retrying... (%d/%d)\n", i + 1, max_retries);
+        if ((http_code == 503)||(http_code == 524)){
+            fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
             if (i < max_retries - 1) { // Don't sleep after the final attempt.
                 #ifdef _WIN32
                     Sleep(2000); // 2 seconds
@@ -2576,8 +2588,8 @@ void list_available_models(AppState* state) {
                 break; // Success, exit the retry loop.
             }
 
-            if (http_code == 503) {
-                fprintf(stderr, "\nAPI returned 503 (Service Unavailable), retrying... (%d/%d)\n", i + 1, max_retries);
+            if ((http_code == 503) || (http_code==524)) {
+                fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
                 if (i < max_retries - 1) { // Don't sleep after the final attempt.
                     #ifdef _WIN32
                         Sleep(2000); // 2 seconds
@@ -2911,8 +2923,8 @@ bool send_api_request(AppState* state, char** full_response_out) {
                 break; // Success, exit the loop.
             }
             // --- MODIFICATION END ---
-        } else if (http_code == 503) {
-            fprintf(stderr, "\nAPI returned 503 (Service Unavailable), retrying... (%d/%d)\n", i + 1, max_retries);
+        } else if ((http_code == 503)||(http_code == 524)) {
+            fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
             if (i < max_retries - 1) { // Don't sleep after the final attempt.
                 #ifdef _WIN32
                     Sleep(2000); // 2 seconds

@@ -1,3 +1,14 @@
+### **Version 2.2.6**
+
+This is a reliability and file compatibility release that expands the range of supported file types and makes the client more resilient to transient network errors.
+
+*   **Improvements:**
+    *   **Expanded File Format Support:** The client can now correctly identify MIME types for a much wider range of common file formats, improving attachment handling for:
+        *   **Audio:** `.m4a`, `.aac`, `.flac`
+        *   **Video:** `.mp4`, `.mov`, `.avi`, `.wmv`, `.flv`
+        *   **Image:** `.bmp`, `.webp`
+    *   **Enhanced API Retry Logic:** The automatic retry mechanism for API requests has been improved. The client now retries not only on `503 Service Unavailable` errors but also on `524 A Timeout Occurred` errors, making it more robust against temporary server or network issues.
+
 ### **Version 2.2.5**
 
 This is a major usability release that introduces graceful interruption of API calls.
