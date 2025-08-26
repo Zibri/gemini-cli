@@ -1,3 +1,14 @@
+### **Version 2.2.7**
+
+This is a major refactoring and simplification release that standardizes the project on a POSIX-compliant codebase and build system, removing native Windows support in favor of improved maintainability and a more robust interactive editing experience via the `readline` library.
+
+*   **Major Refactoring & POSIX Standardization:**
+    *   **Windows Support Removed:** All Windows-specific compatibility code (`#ifdef _WIN32`), API calls, and the `compat.h` header have been removed. The project now targets POSIX-compliant environments like Linux, macOS, and Windows Subsystem for Linux (WSL).
+    *   **Switched to `readline`:** The bundled `linenoise` line-editing library has been completely replaced with the standard `readline` library. This provides a more powerful, feature-rich, and familiar command-line experience for users.
+    *   **Simplified Build Process:** The `Makefile` has been heavily simplified, removing OS detection logic and building a stripped executable in a single, clean step. This makes the build process more straightforward and reliable on supported platforms.
+*   **Improvements:**
+    *   **More Aggressive API Retries:** The client is now more resilient to transient errors. It will automatically retry API requests on any non-successful HTTP status code (except for `403 Forbidden`), not just specific `5xx` errors.
+
 ### **Version 2.2.6**
 
 This is a reliability and file compatibility release that expands the range of supported file types and makes the client more resilient to transient network errors.

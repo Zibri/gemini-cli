@@ -1,73 +1,37 @@
-# Makefile for the portable Gemini gemini-cli client
-# Automatically detects the OS and builds accordingly.
+# Makefile for the gemini-cli client
+# Builds a stripped executable in a single step.
+# Handles Windows (.exe) and POSIX executable names automatically.
 
-# --- Common Configuration ---
-#CC = gcc
+CC = gcc
 TARGET_NAME = gemini-cli
-# Assume cJSON source files are in the current directory
-SRC_COMMON = gemini-cli.c cJSON.c
-OBJ_COMMON = $(SRC_COMMON:.c=.o)
-# Common compiler and linker flags
-CFLAGS += -Wall -Wextra -g -O2 -I.
-#LDFLAGS =
+SRC = gemini-cli.c cJSON.c
 
-# --- Platform-Specific Configuration ---
-
-# Default to POSIX (Linux, macOS)
-OS_TYPE = POSIX
-
-# Check if we are on Windows
-# The 'OS' environment variable is 'Windows_NT' on Windows systems.
+# --- OS-Specific Target Naming ---
+# Default to POSIX style
+TARGET = $(TARGET_NAME)
+# If on Windows, append .exe
 ifeq ($(OS),Windows_NT)
-	OS_TYPE = WINDOWS
-else
-	UNAME_S := $(shell uname -s)
-endif
-
-# --- Windows Build ---
-ifeq ($(OS_TYPE),WINDOWS)
 	TARGET = $(TARGET_NAME).exe
-	# On Windows, we compile linenoise.c directly into our program
-	SRC = $(SRC_COMMON) linenoise.c
-	# On Windows, libcurl often needs the sockets and crypto libraries
-	LIBS = -lcurl -lz -lws2_32 -lbcrypt
-	RM = del /Q
-	STRIP = strip -s
-
-# --- POSIX Build ---
-else
-	TARGET = $(TARGET_NAME)
-	# On POSIX, we don't compile linenoise.c
-	SRC = $(SRC_COMMON)
-	# On POSIX, we link against the installed readline library
-	LIBS = -lcurl -lz -lreadline
-	RM = rm -f
-	ifeq ($(UNAME_S),Darwin)
-		STRIP = strip
-	else
-		STRIP = strip -s
-	endif
+	CC = clang
 endif
 
-OBJ = $(SRC:.c=.o)
+# Compiler and Linker Flags
+CFLAGS = -Wall -Wextra -O2
+LIBS = -lcurl -lz -lreadline
+# Add -s to LDFLAGS to strip the final executable during linking
+LDFLAGS = -s
+
+# Utility Commands
+RM = rm -f
 
 # --- Build Rules ---
 
 all: clean $(TARGET)
 
-$(TARGET): $(OBJ)
-	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
-	$(STRIP) $@
-	$(RM) $^
-
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
 clean:
-ifeq ($(OS_TYPE),WINDOWS)
-	$(RM) *.o *.exe
-else
-	$(RM) *.o $(TARGET)
-endif
+	$(RM) $(TARGET_NAME) *.o
 
 .PHONY: all clean

@@ -32,31 +32,18 @@
 
 #include <limits.h>
 
-// --- Portability Layer ---
-#ifdef _WIN32
-  #include <windows.h>
-  #include <direct.h>
-  #include "linenoise.h"
-  #include <conio.h>
-  #define MKDIR(path) _mkdir(path)
-  #define STRCASECMP _stricmp
-  #define PATH_MAX MAX_PATH
-  #define stat _stat
-  #include <io.h>
-  #define NULL_DEVICE "NUL"
-#else
-  #include <unistd.h>
-  #include <termios.h>
-  #include <limits.h>
-  #include <readline/readline.h>
-  #include <readline/history.h>
-  #include <dirent.h> 
-  #include <fcntl.h>
-  #define NULL_DEVICE "/dev/null"
-  #define MKDIR(path) mkdir(path, 0755)
-  #define STRCASECMP strcasecmp
-#endif
+#include <unistd.h>
+#include <termios.h>
+#include <readline/readline.h>
+#include <readline/history.h>
+#include <dirent.h> 
+#include <fcntl.h>
+#define NULL_DEVICE "/dev/null"
+#define MKDIR(path) mkdir(path, 0755)
+#define STRCASECMP strcasecmp
 
+#include <strings.h>
+  
 #include <signal.h>
 
 // --- Configuration Constants ---
@@ -803,12 +790,6 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
     }
 
     // --- 7. Main Interactive Loop ---
-    // This section only runs if the program was launched in interactive mode.
-    #ifdef _WIN32
-        char history_path[PATH_MAX];
-        snprintf(history_path, sizeof(history_path), "%s\\gemini-cli\\history.txt", getenv("APPDATA"));
-        linenoiseHistoryLoad(history_path);
-    #endif
 
     if (interactive && state.num_attached_parts > 0 && initial_prompt_len == 0) {
         //fprintf(stderr, "Note: Files attached via command line have been loaded into the history.\n");
@@ -825,16 +806,11 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             // Display the prompt, e.g., "([unsaved])>: "
             snprintf(prompt_buffer, sizeof(prompt_buffer), "\n(%s)>: ", state.current_session_name);
 
-            #ifdef _WIN32
-                line = linenoise(prompt_buffer);
-                if (line == NULL) break; // EOF on Windows (Ctrl+Z, Enter)
-            #else
-                line = readline(prompt_buffer);
-                if (line == NULL) { // EOF on POSIX (Ctrl+D)
-                    printf("\n");
-                    break;
-                }
-            #endif
+            line = readline(prompt_buffer);
+            if (line == NULL) { // EOF on POSIX (Ctrl+D)
+                printf("\n");
+                break;
+            }
 
         	  interrupt_flag = 0;
             
@@ -873,12 +849,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
 
                     // The single, shared block for history and cleanup.
                     if (*p) {
-                        #ifndef _WIN32
-                            add_history(line);
-                        #else
-                            linenoiseHistoryAdd(line);
-                            linenoiseHistorySave(history_path);
-                        #endif
+                        add_history(line);
                     }
                     free(line);
                     continue; // Skip the rest of the loop.
@@ -903,12 +874,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
 
             // Add non-empty lines to the readline history.
             if (*p) {
-                #ifndef _WIN32
-                    add_history(line);
-                #else
-                    linenoiseHistoryAdd(line);
-                    linenoiseHistorySave(history_path);
-                #endif
+                add_history(line);
             }
 
             // If the line is empty and there are no attachments, just show a new prompt.
@@ -1518,11 +1484,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         fprintf(stderr,"Unknown command for '/history'. Try '/history attachments'.\n");
                     }
                 } else if (strcmp(command_buffer, "/paste") == 0) {
-                    #ifdef _WIN32
-                        fprintf(stderr, "Pasting content. Press Ctrl+Z then Enter when done.\n");
-                    #else
-                        fprintf(stderr, "Pasting content. Press Ctrl+D when done.\n");
-                    #endif
+                    fprintf(stderr, "Pasting content. Press Ctrl+D when done.\n");
                     handle_attachment_from_stream(stdin, "stdin", "text/plain", &state);
                 } else {
                     fprintf(stderr,"Unknown command: %s. Type /help for a list of commands.\n", command_buffer);
@@ -2104,23 +2066,6 @@ const char* get_system_language(void) {
     static char language_buffer[16]; // Sufficient for "ll-CC" and some slack.
     bool success = false;
 
-#ifdef _WIN32
-    // --- Windows Implementation ---
-    // Use the Win32 API to get language and country codes separately.
-    LCID lcid = GetThreadLocale();
-    char lang[9] = {0};
-    char country[9] = {0};
-
-    // Get the ISO 639 language name (e.g., "en") and ISO 3166 country name (e.g., "US").
-    if (GetLocaleInfoA(lcid, LOCALE_SISO639LANGNAME, lang, sizeof(lang)) > 0 &&
-        GetLocaleInfoA(lcid, LOCALE_SISO3166CTRYNAME, country, sizeof(country)) > 0)
-    {
-        // Safely combine them into the final "ll-CC" format.
-        snprintf(language_buffer, sizeof(language_buffer), "%s-%s", lang, country);
-        success = true;
-    }
-
-#else
     // --- POSIX Implementation ---
     // Use setlocale to query the locale from environment variables (e.g., LANG).
     // An empty string "" for the second argument tells it to use the environment.
@@ -2147,7 +2092,6 @@ const char* get_system_language(void) {
         }
         success = true;
     }
-#endif
 
     // --- Fallback on Failure ---
     // If neither of the platform-specific methods succeeded, set a default value.
@@ -2353,14 +2297,10 @@ bool send_free_api_request(AppState* state, const char* prompt) {
         }
 
         // Case 2: Retryable server error
-        if ((http_code == 503)||(http_code == 524)){
+        if ((http_code != 403) && (http_code!=200)){
             fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
             if (i < max_retries - 1) { // Don't sleep after the final attempt.
-                #ifdef _WIN32
-                    Sleep(2000); // 2 seconds
-                #else
-                    sleep(2);
-                #endif
+                sleep(2);
             }
         } else {
             // Case 3: Any other error is final, so don't retry.
@@ -2588,14 +2528,10 @@ void list_available_models(AppState* state) {
                 break; // Success, exit the retry loop.
             }
 
-            if ((http_code == 503) || (http_code==524)) {
+            if ((http_code != 403) && (http_code!=200)) {
                 fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
                 if (i < max_retries - 1) { // Don't sleep after the final attempt.
-                    #ifdef _WIN32
-                        Sleep(2000); // 2 seconds
-                    #else
-                        sleep(2);
-                    #endif
+                    sleep(2);
                 }
             } else {
                 // Any other error is final, don't retry.
@@ -2758,17 +2694,6 @@ void export_history_to_markdown(AppState* state, const char* filepath) {
 void get_base_app_path(char* buffer, size_t buffer_size) {
     const char* config_dir_name = "gemini-cli";
 
-#ifdef _WIN32
-    // On Windows, the standard location is the APPDATA directory.
-    char* base_path = getenv("APPDATA");
-    if (!base_path) {
-        buffer[0] = '\0'; // Unable to find APPDATA directory.
-        return;
-    }
-    // Construct the full path: C:\Users\user\AppData\Roaming\gemini-cli
-    snprintf(buffer, buffer_size, "%s\\%s", base_path, config_dir_name);
-    MKDIR(buffer); // Create the directory if it doesn't exist.
-#else
     // On POSIX systems, the standard is the .config directory in the user's home.
     char* base_path = getenv("HOME");
     if (!base_path) {
@@ -2783,7 +2708,6 @@ void get_base_app_path(char* buffer, size_t buffer_size) {
     // Then, construct the full path: /home/user/.config/gemini-cli
     snprintf(buffer, buffer_size, "%s/.config/%s", base_path, config_dir_name);
     MKDIR(buffer); // Create the final directory if it doesn't exist.
-#endif
 }
 
 /**
@@ -2815,11 +2739,7 @@ bool build_session_path(const char* session_name, char* path_buffer, size_t buff
     }
 
     // Define the correct path separator for the operating system.
-#ifdef _WIN32
-    const char* separator = "\\";
-#else
     const char* separator = "/";
-#endif
 
     // Pre-calculate the required buffer size to prevent overflow with snprintf.
     // Required size = base_path + separator + session_name + ".json" + null_terminator
@@ -2910,11 +2830,7 @@ bool send_api_request(AppState* state, char** full_response_out) {
                 // Treat the empty response as a transient, retryable error.
                 fprintf(stderr, "\nAPI returned an empty response, retrying... (%d/%d)\n", i + 1, max_retries);
                 if (i < max_retries - 1) { // Don't sleep after the final attempt.
-                    #ifdef _WIN32
-                        Sleep(2000); // 2 seconds
-                    #else
-                        sleep(2);
-                    #endif
+                    sleep(2);
                 }
                 // By not setting 'success' or breaking, we allow the loop to proceed to the next iteration.
             } else {
@@ -2923,14 +2839,10 @@ bool send_api_request(AppState* state, char** full_response_out) {
                 break; // Success, exit the loop.
             }
             // --- MODIFICATION END ---
-        } else if ((http_code == 503)||(http_code == 524)) {
+        } else if ((http_code != 403) && (http_code!=200)) {
             fprintf(stderr, "\nAPI returned %ld (Service Unavailable), retrying... (%d/%d)\n", http_code, i + 1, max_retries);
             if (i < max_retries - 1) { // Don't sleep after the final attempt.
-                #ifdef _WIN32
-                    Sleep(2000); // 2 seconds
-                #else
-                    sleep(2);
-                #endif
+                sleep(2);
             }
         } else {
             // Any other error is final, don't retry.
@@ -3528,11 +3440,7 @@ void get_sessions_path(char* buffer, size_t buffer_size) {
 
     // Construct the full path to the sessions subdirectory using the
     // correct path separator for the current operating system.
-#ifdef _WIN32
-    snprintf(buffer, buffer_size, "%s\\%s", base_app_path, sessions_dir_name);
-#else
     snprintf(buffer, buffer_size, "%s/%s", base_app_path, sessions_dir_name);
-#endif
 
     // Create the sessions directory if it doesn't already exist.
     MKDIR(buffer);
@@ -3582,37 +3490,6 @@ void list_sessions() {
     fprintf(stderr, "Saved Sessions:\n");
     int count = 0;
 
-#ifdef _WIN32
-    // --- Windows Implementation ---
-    char search_path[PATH_MAX];
-    snprintf(search_path, sizeof(search_path), "%s\\*.json", sessions_path);
-
-    WIN32_FIND_DATA fd;
-    HANDLE hFind = FindFirstFile(search_path, &fd);
-
-    if (hFind == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "  (No sessions found)\n");
-        return;
-    }
-
-    // Iterate through all found .json files.
-    do {
-        // Temporarily remove the .json extension for clean printing.
-        char* dot = strrchr(fd.cFileName, '.');
-        if (dot && strcmp(dot, ".json") == 0) {
-            *dot = '\0';
-            fprintf(stderr, "  - %s\n", fd.cFileName);
-            count++;
-        }
-    } while (FindNextFile(hFind, &fd) != 0);
-
-    FindClose(hFind);
-
-    if (count == 0) {
-        fprintf(stderr, "  (No sessions found)\n");
-    }
-
-#else
     // --- POSIX (Linux, macOS) Implementation ---
     DIR *d = opendir(sessions_path);
     if (d) {
@@ -3634,7 +3511,6 @@ void list_sessions() {
     if (count == 0) {
         fprintf(stderr, "  (No sessions found)\n");
     }
-#endif
 }
 
 /**
@@ -3658,12 +3534,7 @@ void get_config_path(char* buffer, size_t buffer_size) {
         return;
     }
 
-    // Define the correct path separator for the current operating system.
-#ifdef _WIN32
-    const char* separator = "\\";
-#else
     const char* separator = "/";
-#endif
 
     // Pre-calculate the required buffer size to prevent an overflow with snprintf.
     // Required size = base_path + separator + config_file_name + null_terminator
@@ -3850,25 +3721,6 @@ void get_masked_input(const char* prompt, char* buffer, size_t buffer_size) {
     memset(buffer, 0, buffer_size);
     size_t i = 0;
 
-#ifdef _WIN32
-    // --- Windows Implementation using conio.h ---
-    char ch;
-    while (i < buffer_size - 1) {
-        ch = _getch(); // Reads a character directly without waiting for Enter.
-
-        if (ch == '\r' || ch == '\n') { // User pressed Enter.
-            break;
-        } else if (ch == '\b') { // User pressed Backspace.
-            if (i > 0) {
-                i--;
-                fprintf(stderr, "\b \b"); // Erase the last asterisk from the screen.
-            }
-        } else if (isprint((unsigned char)ch)) { // A printable character was entered.
-            buffer[i++] = ch;
-            fprintf(stderr, "*");
-        }
-    }
-#else
     // --- POSIX (Linux, macOS) Implementation using termios.h ---
     struct termios old_term, new_term;
 
@@ -3899,7 +3751,6 @@ void get_masked_input(const char* prompt, char* buffer, size_t buffer_size) {
 
     // IMPORTANT: Restore the original terminal settings.
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
-#endif
 
     buffer[i] = '\0'; // Always null-terminate the final string.
     fprintf(stderr, "\n"); // Move to the next line after input is complete.
@@ -4598,17 +4449,10 @@ bool is_path_safe(const char* path) {
     }
 
     // Reject absolute paths.
-#ifdef _WIN32
-    // Rejects "C:\path" or "\path"
-    if (path[0] == '\\' || (isalpha((unsigned char)path[0]) && path[1] == ':')) {
-        return false;
-    }
-#else
-    // Rejects "/path"
+
     if (path[0] == '/') {
         return false;
     }
-#endif
 
     return true;
 }
@@ -4794,29 +4638,6 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
             goto cleanup;
         }
 
-        #ifdef _WIN32
-            // On Windows, check if stdin is an interactive console (a TTY)
-            if (_isatty(fd) && input_stream == stdin) {
-                fprintf(stderr, "Reading from stdin. Press Ctrl+D or Ctrl+Z, Enter when done.\n");
-                int c;
-                // Read character by character to manually check for Ctrl+D
-                while ((c = fgetc(input_stream)) != EOF) {
-                    if (c == 4) { // ASCII for Ctrl+D is 4
-                        break; // Exit loop on Ctrl+D
-                    }
-                    if (total_read >= capacity - 1) {
-                        capacity *= 2;
-                        unsigned char* new_buffer = realloc(buffer, capacity);
-                        if (!new_buffer) {
-                            fprintf(stderr, "Error: Failed to reallocate stream buffer.\n");
-                            goto cleanup;
-                        }
-                        buffer = new_buffer;
-                    }
-                    buffer[total_read++] = (unsigned char)c;
-                }
-            } else {
-        #endif
                 // On POSIX, or for a non-interactive pipe on Windows,
                 // the existing block-read logic is safe and efficient.
                 ssize_t bytes_read;
@@ -4836,9 +4657,6 @@ void handle_attachment_from_stream(FILE* stream, const char* filepath, const cha
                     perror("Error reading from input stream");
                     goto cleanup;
                 }
-        #ifdef _WIN32
-            } // end of the windows-specific 'if'
-        #endif
     }
 
     if (total_read == 0) {
@@ -5105,29 +4923,16 @@ int main(int argc, char* argv[]) {
 
     // --- If in quiet mode, redirect stderr to the null device ---
     if (quiet_flag_found) {
-        #ifdef _WIN32
-            // On Windows, freopen_s is the safe way to redirect a standard stream
-            FILE* dummy;
-            if (freopen_s(&dummy, "NUL", "w", stderr) != 0) {
-                // If redirection fails, we can't guarantee quietness, but proceed.
-            }
-        #else
             // On POSIX, freopen is the standard way
             if (freopen("/dev/null", "w", stderr) == NULL) {
                 // If redirection fails, we can't guarantee quietness, but proceed.
             }
-        #endif
     }
 
 
     // Differentiate between interactive and non-interactive (piped) modes.
-#ifdef _WIN32
-    int is_stdin_a_terminal = _isatty(_fileno(stdin));
-    int is_stdout_a_terminal = _isatty(_fileno(stdout));
-#else
     int is_stdin_a_terminal = isatty(fileno(stdin));
     int is_stdout_a_terminal = isatty(fileno(stdout));
-#endif
 
     // A session is interactive only if both are terminals AND the execute flag is NOT present.
     bool is_interactive = (is_stdin_a_terminal && is_stdout_a_terminal) && !execute_flag_found;
