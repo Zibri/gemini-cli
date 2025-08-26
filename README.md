@@ -52,7 +52,6 @@ First, get the source code using git:
 git clone https://github.com/Zibri/gemini-cli.git
 cd gemini-cli
 ```
-
 ### 2. Install Prerequisites
 You will need a C compiler (`gcc` or `clang`) and the development headers for the following libraries:
 
@@ -84,17 +83,27 @@ brew install curl readline zlib
 ```
 
 **On Windows:**
-The easiest way to build on Windows is by using a POSIX-like environment such as [MSYS2](https://www.msys2.org/). Once you have MSYS2 installed, open the **UCRT64** terminal and install the necessary packages:
-```bash
-pacman -Syu
-pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-make mingw-w64-ucrt-x86_64-curl mingw-w64-ucrt-x86_64-zlib
-```
+
+The easiest way to build on Windows is by using a POSIX-like environment such as [MSYS2](https://www.msys2.org/).
+
+1.  After installing MSYS2, open the **MSYS2 CLANG64** terminal from your Start Menu.
+
+2.  Inside the terminal, use `pacman` to update the system and install the required compiler and development libraries with this single command:
+
+    ```bash
+    pacman -Suy libcurl-devel libreadline-devel clang make
+    ```
+
+3.  Once the installation is complete, you can compile the program by simply running:
+    ```bash
+    make
+    ```
 
 ### 3. Compile the Program
-The project includes a `Makefile` that automatically detects your operating system and compiles the program with the correct settings. Simply run:
-```bash
+The project includes a `Makefile` that automatically detects your operating system and compiles the program with the correct settings. Simply run:```bash
 make
-```This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
+```
+This will create an executable named `gemini-cli` (or `gemini-cli.exe` on Windows). You can move this file to a directory in your system's `PATH` (e.g., `/usr/local/bin` or `~/bin`) for easy access.
 
 ### 4. Configuration
 There are two ways to use the client: with an API key (official API) or without one (unofficial API).
@@ -209,7 +218,6 @@ cat my_complex_function.c | ./gemini-cli -q "Explain what this C code does in si
 
 # Generate a git commit message from the staged changes using the stdin attachment flag
 git diff --staged | ./gemini-cli -e "Write a concise, imperative git commit message for these changes: -"```
-
 ### Interactive Commands
 
 Type `/help` at the prompt to see a list of available commands.
@@ -274,4 +282,3 @@ This tool would not be possible without these fantastic open-source libraries:
 *   [cJSON](https://github.com/DaveGamble/cJSON) for easy JSON parsing.
 *   [zlib](https://zlib.net/) for data compression.
 *   [readline](https://tiswww.case.edu/php/chet/readline/rltop.html) for a superior command-line experience on POSIX.
-*   [linenoise](https://github.com/antirez/linenoise) for a lightweight readline alternative on Windows.
