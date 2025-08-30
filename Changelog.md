@@ -1,3 +1,13 @@
+### **Version 2.2.9**
+
+This is a usability release that adds convenient short aliases for common session management commands.
+
+*   **Features:**
+    *   **New Command Aliases:**
+        *   `--list-sessions` can now be shortened to `--sl`.
+        *   `--load-session` can now be shortened to `--ls`.
+        *   `--save-session` can now be shortened to `--ss`.
+
 ### **Version 2.2.8**
 
 This is a usability release that adds convenient short aliases for common session management commands.
