@@ -1,3 +1,13 @@
+### **Version 2.2.8**
+
+This is a usability release that adds convenient short aliases for common session management commands.
+
+*   **Features:**
+    *   **New Command Aliases:**
+        *   `--list-sessions` can now be shortened to `--sl`.
+        *   `--save-session` can now be shortened to `--ss`.
+        *   `--load-session` can now be shortened to `--ls`.
+
 ### **Version 2.2.7**
 
 This is a major refactoring and simplification release that standardizes the project on a POSIX-compliant codebase and build system, removing native Windows support in favor of improved maintainability and a more robust interactive editing experience via the `readline` library.

@@ -2989,9 +2989,9 @@ static OptionType classify_option(const char *arg) {
     if (!STRCASECMP(arg, "--remove-key"))                                        return OPT_REMOVE_KEY;
     if (!STRCASECMP(arg, "--check-keys"))                                        return OPT_CHECK_KEYS;
     if (!STRCASECMP(arg, "-l")          || !STRCASECMP(arg, "--list"))           return OPT_LIST_MODELS;
-    if (!STRCASECMP(arg, "--list-sessions"))                                     return OPT_LIST_SESSIONS;
-    if (!STRCASECMP(arg, "--save-session"))                                      return OPT_SAVE_SESSION;
-    if (!STRCASECMP(arg, "--load-session"))                                      return OPT_LOAD_SESSION;
+    if (!STRCASECMP(arg, "--list-sessions") || !STRCASECMP(arg, "--sl"))         return OPT_LIST_SESSIONS;
+    if (!STRCASECMP(arg, "--save-session")  || !STRCASECMP(arg, "--ss"))         return OPT_SAVE_SESSION;
+    if (!STRCASECMP(arg, "--load-session")  || !STRCASECMP(arg, "--ls"))         return OPT_LOAD_SESSION;
     if (!STRCASECMP(arg, "-h")          || !STRCASECMP(arg, "--help"))           return OPT_HELP;
     return OPT_UNKNOWN;
 }
