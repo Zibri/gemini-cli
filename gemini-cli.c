@@ -100,6 +100,7 @@ typedef struct AppState {
     char* final_code;
     char *host;
     bool safety;
+    char *media_resolution;
 } AppState;
 
 typedef struct {
@@ -713,6 +714,7 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
             fprintf(stderr,"Google grounding: %s\n", state.google_grounding?"ON":"OFF");
             fprintf(stderr,"URL Context: %s\n", state.url_context?"ON":"OFF");
 
+            if (state.media_resolution) fprintf(stderr,"Media resolution: %s\n", state.media_resolution+17);
             if (key_from_env) fprintf(stderr,"API Key loaded from environment variable.\n");
             else if (state.api_key[0] != '\0') fprintf(stderr,"API Key loaded from configuration file.\n");
             if (origin_from_env) fprintf(stderr,"Origin loaded from environment variable: %s\n", state.origin);
@@ -2373,6 +2375,7 @@ void save_configuration(AppState* state) {
     cJSON_AddNumberToObject(root, "thinking_budget", state->thinking_budget);
     cJSON_AddBoolToObject(root, "google_grounding", state->google_grounding);
     cJSON_AddBoolToObject(root, "url_context", state->url_context);
+    //if (state->media_resolution) cJSON_AddStringToObject(root,"media_resolution", state->media_resolution);
     // Only save topK and topP if they have been explicitly set.
     if (state->topK > 0) {
         cJSON_AddNumberToObject(root, "top_k", state->topK);
@@ -2953,7 +2956,7 @@ typedef enum {
     OPT_UNKNOWN,
     OPT_MODEL, OPT_HOST, OPT_SYSTEM, OPT_CONFIG,
     OPT_TEMP, OPT_PROXY, OPT_SEED, OPT_MAX_TOKENS,
-    OPT_TOPK, OPT_TOPP, OPT_BUDGET,
+    OPT_TOPK, OPT_TOPP, OPT_BUDGET, OPT_ML, OPT_MM,
     OPT_EXECUTE, OPT_QUIET, OPT_NO_GROUNDING, OPT_FREE, OPT_NO_URL_CONTEXT, OPT_SAFETY,
     OPT_LOC, OPT_MAP,
     OPT_LIST_KEYS, OPT_ADD_KEY, OPT_REMOVE_KEY, OPT_CHECK_KEYS,
@@ -2989,6 +2992,8 @@ static OptionType classify_option(const char *arg) {
     if (!STRCASECMP(arg, "--remove-key"))                                        return OPT_REMOVE_KEY;
     if (!STRCASECMP(arg, "--check-keys"))                                        return OPT_CHECK_KEYS;
     if (!STRCASECMP(arg, "-l")          || !STRCASECMP(arg, "--list"))           return OPT_LIST_MODELS;
+    if (!STRCASECMP(arg, "--mm"))                                                return OPT_MM;
+    if (!STRCASECMP(arg, "--ml"))                                                return OPT_ML;
     if (!STRCASECMP(arg, "--list-sessions") || !STRCASECMP(arg, "--sl"))         return OPT_LIST_SESSIONS;
     if (!STRCASECMP(arg, "--save-session")  || !STRCASECMP(arg, "--ss"))         return OPT_SAVE_SESSION;
     if (!STRCASECMP(arg, "--load-session")  || !STRCASECMP(arg, "--ls"))         return OPT_LOAD_SESSION;
@@ -2997,6 +3002,7 @@ static OptionType classify_option(const char *arg) {
 }
 
 int parse_common_options(int argc, char *argv[], AppState *state) {
+	
     for (int i = 1; i < argc; i++) {
         const char   *arg      = argv[i];
         const char   *next_arg = (i + 1 < argc ? argv[i + 1] : NULL);
@@ -3046,6 +3052,14 @@ int parse_common_options(int argc, char *argv[], AppState *state) {
                     state->temperature = atof(next_arg);
                     i++;
                 }
+                break;
+
+            case OPT_MM:
+                state->media_resolution = "MEDIA_RESOLUTION_MEDIUM";
+                break;
+
+            case OPT_ML:
+                state->media_resolution = "MEDIA_RESOLUTION_LOW";
                 break;
 
             case OPT_PROXY:
@@ -3371,6 +3385,8 @@ void initialize_default_state(AppState* state) {
     state->save_session_path = NULL;
     
     state->host = strdup("generativelanguage.googleapis.com");
+    
+    state->media_resolution = NULL;
 }
 
 /**
@@ -3926,6 +3942,8 @@ cJSON* build_request_json(AppState* state) {
     cJSON* thinking_config = cJSON_CreateObject();
     cJSON_AddNumberToObject(thinking_config, "thinkingBudget", state->thinking_budget);
     cJSON_AddItemToObject(gen_config, "thinkingConfig", thinking_config);
+
+    if (state->media_resolution) cJSON_AddStringToObject(gen_config, "mediaResolution", state->media_resolution);
 
     cJSON_AddItemToObject(root, "generationConfig", gen_config);
 
