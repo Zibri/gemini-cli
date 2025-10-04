@@ -1050,6 +1050,14 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                     } else if (strcmp(sub_command, "list") == 0) {
                         list_sessions();
                     } else if (strcmp(sub_command, "save") == 0) {
+                        if (session_name[0] != '\0') {
+                            char* end = session_name + strlen(session_name) - 1;
+                            while (end >= session_name && isspace((unsigned char)*end)) {
+                                end--;
+                            }
+                            *(end + 1) = '\0';
+                        }
+
                         if (session_name[0] == '\0') {
                             fprintf(stderr, "Usage: /session save <name>\n");
                         } else {
@@ -1281,6 +1289,14 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         fprintf(stderr, "Usage: /urlcontext [on|off]\n");
                     }
                 } else if (strcmp(command_buffer, "/save") == 0) {
+                    if (*arg_start != '\0') {
+                        char* end = arg_start + strlen(arg_start) - 1;
+                        while (end > arg_start && isspace((unsigned char)*end)) {
+                            end--;
+                        }
+                        *(end + 1) = '\0';
+                    }
+
                     if (!is_path_safe(arg_start)) {
                         fprintf(stderr, "Error: Unsafe or absolute file path specified: %s\n", arg_start);
                     } else {
@@ -3454,8 +3470,15 @@ void get_sessions_path(char* buffer, size_t buffer_size) {
         return;
     }
 
-    // Construct the full path to the sessions subdirectory using the
-    // correct path separator for the current operating system.
+    // Pre-calculate the required buffer size to prevent an overflow.
+    size_t required_size = strlen(base_app_path) + 1 /*separator*/ + strlen(sessions_dir_name) + 1 /*null*/;
+    if (required_size > buffer_size) {
+        fprintf(stderr, "Error: Resolved sessions path is too long.\n");
+        buffer[0] = '\0';
+        return;
+    }
+
+    // Safely construct the final, full path.
     snprintf(buffer, buffer_size, "%s/%s", base_app_path, sessions_dir_name);
 
     // Create the sessions directory if it doesn't already exist.
@@ -4930,12 +4953,17 @@ int main(int argc, char* argv[]) {
     // --- Pre-scan arguments for mode flags ---
     bool execute_flag_found = false;
     bool quiet_flag_found = false;
+    bool interactive_flag_found = false;
+    
     for (int i = 1; i < argc; i++) {
         if (STRCASECMP(argv[i], "-e") == 0 || STRCASECMP(argv[i], "--execute") == 0) {
             execute_flag_found = true;
         }
         if (STRCASECMP(argv[i], "-q") == 0 || STRCASECMP(argv[i], "--quiet") == 0) {
             quiet_flag_found = true;
+        }
+        if (STRCASECMP(argv[i], "-i") == 0 || STRCASECMP(argv[i], "--interactive") == 0) {
+            interactive_flag_found = true;
         }
     }
 
@@ -4953,7 +4981,7 @@ int main(int argc, char* argv[]) {
     int is_stdout_a_terminal = isatty(fileno(stdout));
 
     // A session is interactive only if both are terminals AND the execute flag is NOT present.
-    bool is_interactive = (is_stdin_a_terminal && is_stdout_a_terminal) && !execute_flag_found;
+    bool is_interactive = (interactive_flag_found) || ((is_stdin_a_terminal && is_stdout_a_terminal) && !execute_flag_found);
 
     // Start the main session logic, passing the determined mode.
     generate_session(argc, argv, is_interactive, is_stdin_a_terminal);

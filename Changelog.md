@@ -1,3 +1,13 @@
+### **Version 2.3.1**
+
+This is a quality-of-life and security release that adds more explicit control over interactive mode and improves input handling.
+
+*   **Features:**
+    *   **Force Interactive Mode:** A new `--interactive` (or `-i`) flag has been added to force the application to run in interactive mode, even when stdin or stdout are redirected.
+*   **Fixes & Improvements:**
+    *   **Input Trimming:** Trailing whitespace is now automatically trimmed from session names and file paths when saving, preventing unexpected behavior.
+    *   **Security:** Added a buffer overflow check to the session path construction logic for improved stability and security.
+
 ### **Version 2.3.0**
 
 This is a feature release that gives users control over media processing to help manage token usage.
@@ -33,4 +43,3 @@ This is a major refactoring and simplification release that standardizes the pro
 
 *   **Major Refactoring & POSIX Standardization:**
     *   **Windows Support Removed:** All Windows-specific compatibility code (`#ifdef _WIN32`), API calls, and the `compat.h` header have been removed. The project now targets POSIX-compliant environments like Linux, macOS, and Windows Subsystem for Linux (WSL).
-    *   **
