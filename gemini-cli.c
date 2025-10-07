@@ -1309,6 +1309,14 @@ void generate_session(int argc, char* argv[], bool interactive, bool is_stdin_a_
                         load_history_from_file(&state, arg_start);
                     }
                 } else if (strcmp(command_buffer, "/savelast") == 0) {
+                    if (*arg_start != '\0') {
+                        char* end = arg_start + strlen(arg_start) - 1;
+                        while (end > arg_start && isspace((unsigned char)*end)) {
+                            end--;
+                        }
+                        *(end + 1) = '\0';
+                    } else fprintf(stderr,"Usage: /savelast filename\n");
+           
                     if (state.last_model_response) {
                         if (!is_path_safe(arg_start)) {
                             fprintf(stderr, "Error: Unsafe file path for saving last response.\n");

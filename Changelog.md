@@ -1,3 +1,11 @@
+### **Version 2.3.2**
+
+This is a usability and bugfix release that improves the behavior of the `/savelast` command.
+
+*   **Fixes & Improvements:**
+    *   **Input Trimming:** Trailing whitespace is now automatically trimmed from the filename argument for the `/savelast` command.
+    *   **Usage Message:** The `/savelast` command now prints a helpful usage message if a filename is not provided.
+
 ### **Version 2.3.1**
 
 This is a quality-of-life and security release that adds more explicit control over interactive mode and improves input handling.
