@@ -2299,6 +2299,7 @@ bool send_free_api_request(AppState* state, const char* prompt) {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_free_memory_callback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &callback_data);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
         http_code = 0;
         res = curl_easy_perform(curl);
@@ -2482,6 +2483,7 @@ long perform_api_get_request(const char* url, AppState* state, size_t (*callback
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, callback_data);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
     // Execute the request and retrieve the HTTP response code.
     long http_code = 0;
@@ -4919,6 +4921,7 @@ long perform_api_curl_request(AppState* state, const char* endpoint, const char*
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)payload_size);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, callback_data);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L);
 
     // Execute the request and retrieve the HTTP response code.
     long http_code = 0;

@@ -1,3 +1,10 @@
+### **Version 2.3.3**
+
+This is a quality-of-life release that improves the application's resilience to network issues.
+
+*   **Fixes & Improvements:**
+    *   **API Request Timeout:** A 300-second (5-minute) timeout has been added to all API requests to prevent the application from hanging indefinitely on network problems.
+
 ### **Version 2.3.2**
 
 This is a usability and bugfix release that improves the behavior of the `/savelast` command.
